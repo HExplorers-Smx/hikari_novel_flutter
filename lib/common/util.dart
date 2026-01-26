@@ -41,7 +41,7 @@ class Util {
   static Future<dynamic> isLatestVersionAvail() async {
     final response = await Api.fetchLatestRelease();
     if (response is Success) {
-      final data = jsonDecode(response.data);
+      final data = response.data;
       final remoteVer = data['tag_name']; // e.g. "1.2.3"
 
       final info = await PackageInfo.fromPlatform();
