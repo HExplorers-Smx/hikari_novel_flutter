@@ -42,65 +42,52 @@ class ReaderPage extends StatelessWidget {
       body: Stack(
         children: [
           Obx(
-            () => Offstage(
-              offstage: controller.pageState.value != PageState.success,
-              child: GestureDetector(
-                behavior: HitTestBehavior.translucent, //防止上下滚动事件被拦截，只拦截点击事件
-                onTap: () => controller.showBar.value = !controller.showBar.value,
-                child: ReaderBackground(
-                  child: Obx(
-                    () => Padding(
-                      padding: EdgeInsets.only(
-                        bottom: controller.readerSettingsState.value.showStatusBar ? kStatusBarPadding + MediaQuery.of(context).padding.bottom : 0,
+            () => controller.pageState.value == PageState.success
+                ? GestureDetector(
+                    behavior: HitTestBehavior.translucent, //防止上下滚动事件被拦截，只拦截点击事件
+                    onTap: () => controller.showBar.value = !controller.showBar.value,
+                    child: ReaderBackground(
+                      child: Obx(
+                        () => Padding(
+                          padding: EdgeInsets.only(
+                            bottom: controller.readerSettingsState.value.showStatusBar ? kStatusBarPadding + MediaQuery.of(context).padding.bottom : 0,
+                          ),
+                          child: _buildReadPage(context),
+                        ),
                       ),
-                      child: controller.readerSettingsState.value.direction == ReaderDirection.upToDown ? _buildVertical(context) : _buildHorizontal(context),
                     ),
-                  ),
-                ),
-              ),
-            ),
+                  )
+                : Container(),
           ),
           Obx(() {
-            final bool isIgnoring = controller.pageState.value != PageState.success;
-            final bool isOffstage = controller.readerSettingsState.value.direction == ReaderDirection.upToDown;
+            final bool isEnabled =
+                controller.pageState.value == PageState.success && controller.readerSettingsState.value.direction != ReaderDirection.upToDown;
 
-            return Positioned.fill(
-              child: Offstage(
-                offstage: isOffstage,
-                //确保IgnorePointer的hitTestBehavior正确
-                child: IgnorePointer(
-                  ignoring: isIgnoring,
-                  child: Row(
-                    children: [
-                      Expanded(
-                        flex: 1,
-                        child: GestureDetector(
-                          //根据ignoring状态禁用GestureDetector
-                          onTap: isIgnoring
-                              ? null
-                              : () => controller.readerSettingsState.value.direction == ReaderDirection.leftToRight
-                                    ? controller.prevPage()
-                                    : controller.nextPage(),
-                          behavior: HitTestBehavior.translucent,
+            return isEnabled
+                ? Positioned.fill(
+                    child: Row(
+                      children: [
+                        Expanded(
+                          flex: 1,
+                          child: GestureDetector(
+                            onTap: () =>
+                                controller.readerSettingsState.value.direction == ReaderDirection.leftToRight ? controller.prevPage() : controller.nextPage(),
+                            behavior: HitTestBehavior.translucent,
+                          ),
                         ),
-                      ),
-                      const Expanded(flex: 1, child: SizedBox()),
-                      Expanded(
-                        flex: 1,
-                        child: GestureDetector(
-                          onTap: isIgnoring
-                              ? null
-                              : () => controller.readerSettingsState.value.direction == ReaderDirection.leftToRight
-                                    ? controller.nextPage()
-                                    : controller.prevPage(),
-                          behavior: HitTestBehavior.translucent,
+                        const Expanded(flex: 1, child: SizedBox()),
+                        Expanded(
+                          flex: 1,
+                          child: GestureDetector(
+                            onTap: () =>
+                                controller.readerSettingsState.value.direction == ReaderDirection.leftToRight ? controller.nextPage() : controller.prevPage(),
+                            behavior: HitTestBehavior.translucent,
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
+                      ],
+                    ),
+                  )
+                : Container();
           }),
           Obx(() => Offstage(offstage: controller.pageState.value != PageState.loading, child: const LoadingPage())),
           Obx(
@@ -179,6 +166,16 @@ class ReaderPage extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Widget _buildReadPage(BuildContext context) {
+    return Obx(() {
+      if (controller.pageState.value == PageState.success) {
+        return controller.readerSettingsState.value.direction == ReaderDirection.upToDown ? _buildVertical(context) : _buildHorizontal(context);
+      } else {
+        return Container();
+      }
+    });
   }
 
   Widget _buildVertical(BuildContext context) {

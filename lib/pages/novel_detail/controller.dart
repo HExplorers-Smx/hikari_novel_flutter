@@ -390,48 +390,41 @@ class NovelDetailController extends GetxController {
 
   void deleteAllReadHistory() async => DBService.instance.deleteAllReadHistory();
 
-  void deleteReadHistoryByCid(String cid) async => DBService.instance.deleteReadHistoryByCid(cid);
+  Future<void> markAsUnRead() async {
+    for (var chapter in getSelectedChapters()) {
+      await DBService.instance.deleteReadHistoryByCid(chapter.cid);
+    }
+  }
 
-  void setReadHistory100PercentByCid(String cid) async {
-    final readerMode = LocalStorageService.instance.getReaderDirection() == ReaderDirection.upToDown
-        ? kScrollReadMode
-        : kPageReadMode; // 1为滚动模式，2为翻页模式，翻页模式的左右方向不影响阅读记录的使用
+  Future<void> markAsRead() async {
+    // 1为滚动模式，2为翻页模式，翻页模式的左右方向不影响阅读记录的使用
+    final readerMode = LocalStorageService.instance.getReaderDirection() == ReaderDirection.upToDown ? kScrollReadMode : kPageReadMode;
     bool isDualPage = switch (LocalStorageService.instance.getReaderDualPageMode()) {
       DualPageMode.auto => Get.context!.isLargeScreen(),
       DualPageMode.enabled => true,
       DualPageMode.disabled => false,
     };
 
-    final data = await DBService.instance.getReadHistoryByCid(cid);
+    for (var chapter in getSelectedChapters()) {
+      final data = await DBService.instance.getReadHistoryByCid(chapter.cid);
 
-    if (data == null) {
-      DBService.instance.upsertReadHistoryDirectly(
-        ReadHistoryEntityData(
-          cid: cid,
-          aid: aid,
-          volume: 0,
-          chapter: 0, //TODO 去掉volume和chapter记录
-          readerMode: readerMode,
-          isDualPage: isDualPage,
-          location: 0,
-          progress: 100,
-          isLatest: false,
-        ),
-      );
-    } else {
-      DBService.instance.upsertReadHistoryDirectly(
-        ReadHistoryEntityData(
-          cid: data.cid,
-          aid: data.aid,
-          volume: data.volume,
-          chapter: data.chapter,
-          readerMode: data.readerMode,
-          isDualPage: data.isDualPage,
-          location: data.location,
-          progress: 100,
-          isLatest: data.isLatest,
-        ),
-      );
+      if (data == null) {
+        DBService.instance.upsertReadHistoryDirectly(
+          ReadHistoryEntityData(cid: chapter.cid, aid: aid, readerMode: readerMode, isDualPage: isDualPage, location: 0, progress: 100, isLatest: false),
+        );
+      } else {
+        DBService.instance.upsertReadHistoryDirectly(
+          ReadHistoryEntityData(
+            cid: data.cid,
+            aid: data.aid,
+            readerMode: data.readerMode,
+            isDualPage: data.isDualPage,
+            location: data.location,
+            progress: 100,
+            isLatest: data.isLatest,
+          ),
+        );
+      }
     }
   }
 }

@@ -10,7 +10,6 @@ import 'package:hikari_novel_flutter/models/common/wenku8_node.dart';
 import 'package:hikari_novel_flutter/models/resource.dart';
 import 'package:hikari_novel_flutter/network/request.dart';
 
-import '../common/log.dart';
 import '../service/local_storage_service.dart';
 
 class Api {

@@ -249,7 +249,9 @@ class AppTranslations extends Translations {
       "bookshelf_number_selection": "第 @no 书架",
       "go_to_update": "前往更新",
       "new_version_available": "有新版本可用",
-      "no_new_version_available": "已经是最新版本了"
+      "no_new_version_available": "已经是最新版本了",
+      "mark_as_read": "标为已读",
+      "mark_as_unread": "标为未读"
     },
 
     "zh_TW": {
@@ -498,7 +500,9 @@ class AppTranslations extends Translations {
       "bookshelf_number_selection": "第 @no 書架",
       "go_to_update": "前往更新",
       "new_version_available": "有新版本可用",
-      "no_new_version_available": "已是最新版本"
+      "no_new_version_available": "已是最新版本",
+      "mark_as_read": "標為已讀",
+      "mark_as_unread": "標為未讀"
     }
   };
 }

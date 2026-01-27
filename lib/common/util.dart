@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:ui';
 
 import 'package:get/get.dart';
@@ -7,7 +6,6 @@ import 'package:hikari_novel_flutter/service/local_storage_service.dart';
 import 'package:jiffy/jiffy.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:pub_semver/pub_semver.dart';
-
 import '../models/common/language.dart';
 import '../network/api.dart';
 

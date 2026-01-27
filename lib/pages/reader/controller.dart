@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:battery_plus/battery_plus.dart';
 import 'package:file_picker/file_picker.dart';
@@ -30,8 +31,8 @@ class ReaderController extends GetxController {
 
   late List<CatVolume> catalogue;
   late String aid;
-  int currentVolumeIndex = int.parse(Get.parameters["volume"]!);
-  int currentChapterIndex = int.parse(Get.parameters["chapter"]!);
+  late int currentVolumeIndex;
+  late int currentChapterIndex;
 
   String get cid => catalogue[currentVolumeIndex].chapters[currentChapterIndex].cid;
 
@@ -97,7 +98,6 @@ class ReaderController extends GetxController {
 
     aid = _novelDetailController.aid;
     catalogue = _novelDetailController.novelDetail.value!.catalogue;
-    chapterTitle.value = catalogue[currentVolumeIndex].chapters[currentChapterIndex].title;
 
     _battery.batteryLevel.then((l) => batteryLevel.value = l);
     _battery.onBatteryStateChanged.listen((l) async {
@@ -116,6 +116,20 @@ class ReaderController extends GetxController {
     super.onReady();
     if (readerSettingsState.value.wakeLock) WakelockPlus.toggle(enable: true);
     if (readerSettingsState.value.immersionMode) SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+
+    /*
+     1) 至于这里的cid为什么不直接使用上面的<get cid>，是因为上面的<get cid>依赖currentVolumeIndex和currentChapterIndex。
+        而我们想要currentVolumeIndex和currentChapterIndex的时候，需要根据cid在catalogue中获取其对应的VolumeIndex和ChapterIndex。
+     2) 因为getContent()函数依赖cid，所以我把初始化cid的过程放到了onReady而不是onInit中。
+     */
+    final listOnlyWithCid = catalogue.map((cat) => cat.chapters.map((chap) => chap.cid).toList()).toList(); //仅提取含有cid的list
+    final targetCid = Get.parameters["cid"]!;
+    final indexPosition = (await compute(_findIndexPositionInCatalogue, {'catalogue': listOnlyWithCid, 'cid': targetCid}))!;
+
+    currentVolumeIndex = indexPosition[0];
+    currentChapterIndex = indexPosition[1];
+
+    chapterTitle.value = catalogue[currentVolumeIndex].chapters[currentChapterIndex].title;
 
     await getContent();
   }
@@ -268,9 +282,8 @@ class ReaderController extends GetxController {
       ReadHistoryEntityData(
         cid: cid,
         aid: aid,
-        volume: currentVolumeIndex,
-        chapter: currentChapterIndex,
-        readerMode: readerSettingsState.value.direction == ReaderDirection.upToDown ? kScrollReadMode : kPageReadMode,  // 1为滚动模式，2为翻页模式，翻页模式的左右方向不影响阅读记录的使用
+        readerMode: readerSettingsState.value.direction == ReaderDirection.upToDown ? kScrollReadMode : kPageReadMode,
+        // 1为滚动模式，2为翻页模式，翻页模式的左右方向不影响阅读记录的使用
         isDualPage: isDualPage,
         location: readerSettingsState.value.direction == ReaderDirection.upToDown ? location.value : currentIndex.value,
         progress: readerSettingsState.value.direction == ReaderDirection.upToDown ? verticalProgress.value : horizontalProgress.value,
@@ -532,6 +545,26 @@ class ReaderController extends GetxController {
       await fontsDir.delete(recursive: true);
     }
   }
+}
+
+///查找目标字符串在二维列表中出现的位置
+///返回格式：[外层索引, 内层索引]，未找到则返回 null
+List<int>? _findIndexPositionInCatalogue(Map<String, dynamic> args) {
+  final catalogue = args['catalogue'] as List<List<String>>;
+  final targetCid = args['cid'] as String;
+
+  // 遍历外层列表，同时获取索引和子列表
+  for (int outerIndex = 0; outerIndex < catalogue.length; outerIndex++) {
+    List<String> innerList = catalogue[outerIndex];
+    // 查找目标字符串在当前子列表中的索引
+    int innerIndex = innerList.indexOf(targetCid);
+    // 如果找到（索引不为 -1），返回位置
+    if (innerIndex != -1) {
+      return [outerIndex, innerIndex];
+      // return IndexPosition(volumeIndex: outerIndex, chapterIndex: innerIndex);
+    }
+  }
+  return null;
 }
 
 String _extractContent(String text) {

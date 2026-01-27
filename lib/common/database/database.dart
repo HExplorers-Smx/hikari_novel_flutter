@@ -10,11 +10,35 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2; //版本号
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
-    onUpgrade: (m, from, to) async {},
+    onUpgrade: (m, from, to) async {
+      if (from == 1 && to == 2) {
+        //创建新表
+        await customStatement('''
+          CREATE TABLE read_history_entity_new (
+            cid TEXT PRIMARY KEY,
+            aid TEXT,
+            reader_mode INTEGER,
+            is_dual_page INTEGER,
+            location INTEGER,
+            progress INTEGER,
+            is_latest INTEGER
+          );
+        ''');
+        //拷贝旧数据
+        await customStatement('''
+          INSERT INTO read_history_entity_new (cid, aid, reader_mode, is_dual_page, location, progress, is_latest)
+          SELECT cid, aid, reader_mode, is_dual_page, location, progress, is_latest FROM read_history_entity;
+        ''');
+        //删除旧表
+        await customStatement("DROP TABLE read_history_entity;");
+        //重命名新表
+        await customStatement("ALTER TABLE read_history_entity_new RENAME TO read_history_entity;");
+      }
+    },
   );
 
   Future<void> insertAllBookshelf(Iterable<BookshelfEntityData> data) => batch((b) => b.insertAll(bookshelfEntity, data));
@@ -57,8 +81,8 @@ class AppDatabase extends _$AppDatabase {
 
   Stream<ReadHistoryEntityData?> getWatchableReadHistoryByCid(String cid) => (select(readHistoryEntity)..where((i) => i.cid.equals(cid))).watchSingleOrNull();
 
-  Stream<List<ReadHistoryEntityData>> getWatchableReadHistoryByVolume(String aid, int index) =>
-      (select(readHistoryEntity)..where((i) => i.aid.equals(aid) & i.volume.equals(index))).watch();
+  /// - [cids] 该卷下所有小说的cid
+  Stream<List<ReadHistoryEntityData>> getWatchableReadHistoryByVolume(List<String> cids) => (select(readHistoryEntity)..where((i) => i.cid.isIn(cids))).watch();
 
   Future<void> deleteReadHistoryByCid(String cid) => (delete(readHistoryEntity)..where((i) => i.cid.equals(cid))).go();
 
