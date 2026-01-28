@@ -18,11 +18,18 @@ class SearchPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    // 统一使用 Material3 的 surface 作为页面底色：
+    // - 支持系统动态取色（蓝/绿/紫都能跟随）
+    // - 浅色/深色主题都不会出现“上白下灰”的割裂
+    final pageBg = theme.colorScheme.surface;
+
     return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      body: NestedScrollView(
-        headerSliverBuilder:
-            (context, innerBoxIsScrolled) => [
+      backgroundColor: pageBg,
+      body: Stack(
+        children: [
+          NestedScrollView(
+            headerSliverBuilder: (context, innerBoxIsScrolled) => [
               SliverAppBar(
                 pinned: true,
                 expandedHeight: 300,
@@ -96,7 +103,7 @@ class SearchPage extends StatelessWidget {
                                         itemBuilder: (context, index) {
                                           return ActionChip(
                                             label: Text(controller.searchHistory[index], style: TextStyle(fontSize: 13)),
-                                onPressed: () => controller.searchFromHistory(controller.searchHistory[index]),
+                                            onPressed: () => controller.searchFromHistory(controller.searchHistory[index]),
                                           );
                                         },
                                       ),
@@ -114,69 +121,47 @@ class SearchPage extends StatelessWidget {
                 ),
               ),
             ],
-        body: ColoredBox(color: Theme.of(context).colorScheme.surface, child: Stack(
-          children: [
-            Obx(() => Offstage(
-              offstage: controller.pageState.value != PageState.success,
-              child: Padding(
-                padding: EdgeInsets.symmetric(horizontal: 8),
-                child: EasyRefresh(
-                  onRefresh: () => controller.getPage(false),
-                  onLoad: () => controller.getPage(true),
-                  child: Padding(
-                    padding: EdgeInsets.zero,
-                    child: ResponsiveGridList(
-                      minItemWidth: 100,
-                      horizontalGridSpacing: 4,
-                      verticalGridSpacing: 4,
-                      children:
-                      controller.data.map((item) {
-                        return NovelCoverCard(novelCover: item);
-                      }).toList(),
+            body: Stack(
+              children: [
+                // 确保搜索结果区域始终用页面底色铺满。
+                Positioned.fill(child: ColoredBox(color: pageBg)),
+                Obx(() => Offstage(
+                      offstage: controller.pageState.value != PageState.success,
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 8),
+                        child: EasyRefresh(
+                          onRefresh: () => controller.getPage(false),
+                          onLoad: () => controller.getPage(true),
+                          child: Padding(
+                            padding: EdgeInsets.zero,
+                            child: ResponsiveGridList(
+                              minItemWidth: 100,
+                              horizontalGridSpacing: 4,
+                              verticalGridSpacing: 4,
+                              children: controller.data.map((item) {
+                                return NovelCoverCard(novelCover: item);
+                              }).toList(),
+                            ),
+                          ),
+                        ),
+                      ),
+                    )),
+                Obx(() => Offstage(offstage: controller.pageState.value != PageState.loading, child: Center(child: CircularProgressIndicator()))),
+                Obx(() => Offstage(offstage: controller.pageState.value != PageState.empty, child: Center(child: Text("搜索内容为空")))),
+                Obx(() => Offstage(offstage: controller.pageState.value != PageState.error, child: Center(child: Text(controller.errorMsg)))),
+                Obx(() => Offstage(offstage: controller.pageState.value != PageState.jumpToOtherPage, child: Center(child: Text("已跳转至另一页面")))),
+              ],
+            ),
+          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
-            )),
-            Obx(() => Offstage(offstage: controller.pageState.value != PageState.loading, child: Center(child: CircularProgressIndicator()))),
-Obx(() => Offstage(
-  offstage: controller.pageState.value != PageState.inFiveSecond,
-  child: Center(
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text("点那么快爬虫呢，这不是bug等5秒", textAlign: TextAlign.center),
-        const SizedBox(height: 8),
-        Obx(() {
-          final sec = controller.cooldownSeconds.value;
-          final kw = controller.pendingKeyword.value;
-          if (kw.isNotEmpty) {
-            return Text("请稍后 ${sec}s，将自动搜索：$kw", textAlign: TextAlign.center);
-          }
-          return Text("请稍后 ${sec}s", textAlign: TextAlign.center);
-        }),
-        const SizedBox(height: 12),
-        Obx(() => ElevatedButton(
-          onPressed: () => controller.getPage(false),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.transparent,
-            shadowColor: Colors.transparent,
-            foregroundColor: Colors.transparent,
-            disabledBackgroundColor: Colors.transparent,
-            disabledForegroundColor: Colors.transparent,
-            elevation: 0,
+            ),
           ),
-          child: const Text("重试", style: TextStyle(color: Colors.transparent)),
-        )),
-      ],
-    ),
-  ),
-)),
-            Obx(() => Offstage(offstage: controller.pageState.value != PageState.empty, child: Center(child: Text("搜索内容为空")))),
-            Obx(() => Offstage(offstage: controller.pageState.value != PageState.error, child: Center(child: Text(controller.errorMsg)))),
-            Obx(() => Offstage(offstage: controller.pageState.value != PageState.jumpToOtherPage, child: Center(child: Text("已跳转至另一页面")))),
-          ],
-        ))
+        ],
       ),
     );
   }

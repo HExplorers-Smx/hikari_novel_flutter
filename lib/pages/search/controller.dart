@@ -114,11 +114,12 @@ if (!loadMore && cooldownSeconds.value > 0) {
   pendingKeyword.value = keywordController.text;
   _pendingSearchMode = searchMode.value;
 
-  Get.snackbar(
-    "提示",
-    "点那么快爬虫呢，这不是bug等5秒",
+  Get.rawSnackbar(
+    title: "提示",
+    message: "点那么快爬虫呢，这不是bug等5秒",
     snackPosition: SnackPosition.BOTTOM,
-    duration: const Duration(seconds: 2),
+    duration: const Duration(milliseconds: 900),
+    animationDuration: const Duration(milliseconds: 120),
   );
   return IndicatorResult.fail;
 }
@@ -152,8 +153,21 @@ if (!loadMore && cooldownSeconds.value > 0) {
           final html = result.data;
           if (Parser.isError(html)) {
             if (!loadMore) {
-              pageState.value = PageState.inFiveSecond;
+              // 搜索过快：进入冷却，但不显示遮罩层、不切换页面状态（保持可操作）
+              // 排队一次“最后的关键词”，冷却结束后自动重试
+              pendingKeyword.value = keywordController.text;
+              _pendingSearchMode = searchMode.value;
+
+              pageState.value = data.isNotEmpty ? PageState.success : PageState.pleaseSelect;
               _startCooldown();
+
+              Get.rawSnackbar(
+                title: "提示",
+                message: "点那么快爬虫呢，这不是bug等5秒",
+                snackPosition: SnackPosition.BOTTOM,
+                duration: const Duration(milliseconds: 900),
+                animationDuration: const Duration(milliseconds: 120),
+              );
             } else {
               Get.dialog(
                 AlertDialog(
