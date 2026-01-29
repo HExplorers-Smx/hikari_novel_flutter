@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:hikari_novel_flutter/pages/about/view.dart';
+import 'package:hikari_novel_flutter/pages/audiobook_setting/view.dart';
 import 'package:hikari_novel_flutter/pages/cache_queue/view.dart';
+import 'package:hikari_novel_flutter/pages/offline_books/view.dart';
 import 'package:hikari_novel_flutter/pages/comment/view.dart';
 import 'package:hikari_novel_flutter/pages/home/view.dart';
 import 'package:hikari_novel_flutter/pages/login/view.dart';
+import 'package:hikari_novel_flutter/pages/login_form/view.dart';
 import 'package:hikari_novel_flutter/pages/main/view.dart';
 import 'package:hikari_novel_flutter/pages/novel_detail/view.dart';
 import 'package:hikari_novel_flutter/pages/photo/view.dart';
@@ -25,11 +28,15 @@ class AppRoutes {
   static final List<GetPage<dynamic>> mainRoutePages = [
     CustomGetPage(name: RoutePath.main, page: () => MainPage()),
     CustomGetPage(name: RoutePath.home, page: () => HomePage()),
-    CustomGetPage(name: RoutePath.login, page: () => LoginPage()),
+    // Native login form
+    CustomGetPage(name: RoutePath.login, page: () => LoginFormPage()),
+    // WebView login (fallback)
+    CustomGetPage(name: RoutePath.webLogin, page: () => LoginPage()),
     CustomGetPage(name: RoutePath.photo, page: () => PhotoPage()),
     CustomGetPage(name: RoutePath.reader, page: () => ReaderPage()),
     CustomGetPage(name: RoutePath.welcome, page: () => WelcomePage()),
     CustomGetPage(name: RoutePath.readerSetting, page: () => ReaderSettingPage()),
+    CustomGetPage(name: RoutePath.audiobookSetting, page: () => const AudiobookSettingPage()),
   ];
 
   static Route<dynamic>? subRoutePages(RouteSettings settings) {
@@ -71,6 +78,8 @@ class AppRoutes {
         }
       case RoutePath.cacheQueue:
         return GetPageRoute(settings: settings, page: () => CacheQueuePage());
+      case RoutePath.offlineBooks:
+        return GetPageRoute(settings: settings, page: () => OfflineBooksPage());
       default:
         return null;
     }

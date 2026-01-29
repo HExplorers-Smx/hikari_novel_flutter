@@ -23,7 +23,7 @@ class Request {
   };
 
   static final _dioCookieJar = CookieJar();
-  static final Dio _dio = Dio(
+  static final Dio dio = Dio(
     BaseOptions(
       headers: userAgent,
       responseType: ResponseType.bytes, //使用bytes获取原始数据，方便解码
@@ -32,6 +32,7 @@ class Request {
     ),
   )..interceptors.add(CookieManager(_dioCookieJar));
 
+
   static final Dio _mewxWenku8Dio = Dio(
     BaseOptions(
       headers: {HttpHeaders.userAgentHeader: "Dalvik/2.1.0 (Linux; U; Android 15; 23114RD76B Build/AQ3A.240912.001)"},
@@ -39,13 +40,43 @@ class Request {
     ),
   )..interceptors.add(CookieManager(CookieJar()));
 
-  static String? get _cookie => LocalStorageService.instance.getCookie();
-
   static Map<String, String> _getMewxWenku8PostForm(String request) => {
-    "appver": "1.25-chibi-chapter-144c9c5",
+    "appver": "1.24-pico-mochi",
     "timetoken": DateTime.now().millisecondsSinceEpoch.toString(),
+    // IMPORTANT:
+    // The relay expects the `request` field to be Base64 of UTF-8 bytes.
+    // Using `String.codeUnits` would Base64-encode UTF-16 code units in Dart,
+    // which breaks non-ASCII characters (and can cause login/check-in to fail).
     "request": base64.encode(utf8.encode(request)),
   };
+
+  static String? _sessionCookie;
+
+  static void setSessionCookie(String? value) => _sessionCookie = value;
+  static void clearSessionCookie() => _sessionCookie = null;
+
+  static String? get _cookie => _sessionCookie ?? LocalStorageService.instance.getCookie();
+/// Clear in-memory cookie jar used by [dio].
+  ///
+  /// This does NOT touch the persisted cookie stored in [LocalStorageService].
+  static Future<void> clearCookieJar() async {
+    try {
+      _dioCookieJar.deleteAll();
+    } catch (_) {
+      // ignore
+    }
+    // Also clear any runtime-only cookie.
+    _sessionCookie = null;
+  }
+
+  /// Get cookies currently held in Dio cookie jar for a given URL.
+  static Future<List<Cookie>> getCookiesFor(String url) async {
+    try {
+      return await _dioCookieJar.loadForRequest(Uri.parse(url));
+    } catch (_) {
+      return <Cookie>[];
+    }
+  }
 
   ///获取通用数据（如其他网站的数据，即不用wenku8的cookie）
   /// - [url] 对应网站的url
@@ -74,7 +105,7 @@ class Request {
 
       Log.d("$url ${charsetsType.name}");
 
-      final response = await _dio.get(url, options: _cookie != null ? Options(headers: {..._dio.options.headers, "Cookie": _cookie}) : null);
+      final response = await dio.get(url, options: _cookie != null ? Options(headers: {...dio.options.headers, "Cookie": _cookie}) : null);
 
       //检查是否有重定向
       final html = await _checkRedirects(response);
@@ -96,20 +127,38 @@ class Request {
   /// 检查Response包中是否要求重定向
   /// - [response] 要检查的Response包
   static Future<dynamic> _checkRedirects(Response response) async {
-    if (response.statusCode != null && response.statusCode! >= 300 && response.statusCode! < 400) {
-      final location = response.headers.value('location');
-      if (location != null) {
-        final cookies = await _dioCookieJar.loadForRequest(Uri.parse(location));
-        final cookieHeader = cookies.map((cookie) => '${cookie.name}=${cookie.value}').join('; ');
-        final redirectedResponse = await _dio.get(
-          "${Api.wenku8Node.node}/$location",
-          options: Options(headers: {..._dio.options.headers, 'Cookie': cookieHeader}),
-        );
-        return redirectedResponse.data;
-      }
-    }
-    return response.data;
+  // Manually follow redirects because `followRedirects` is disabled.
+  // This is important for Wenku8 login: the server often sets cookies on a 302 chain.
+  Response current = response;
+  int hop = 0;
+
+  while (current.statusCode != null &&
+      current.statusCode! >= 300 &&
+      current.statusCode! < 400 &&
+      hop < 6) {
+    final location = current.headers.value('location');
+    if (location == null || location.trim().isEmpty) break;
+
+    // Resolve relative redirects against the current request URI.
+    final baseUri = current.realUri;
+    final nextUri = baseUri.resolve(location);
+
+    Log.d("Redirect[${hop + 1}]: $baseUri -> $nextUri");
+
+    // IMPORTANT:
+    // Do NOT manually inject Cookie header here. CookieManager will attach cookies
+    // stored from previous responses automatically.
+    current = await dio.getUri(
+      nextUri,
+      options: Options(
+        headers: {...dio.options.headers},
+      ),
+    );
+    hop++;
   }
+
+  return current.data;
+}
 
   /// 以post方法进行http请求
   /// body以Content-Type: application/x-www-form-urlencoded的形式进行发送
@@ -118,25 +167,31 @@ class Request {
   /// - [charsetsType] response解码的方式
   static Future<Resource> postForm(String url, {required Object? data, required CharsetsType charsetsType}) async {
     try {
-      final response = await _dio.post(
+      final response = await dio.post(
         url,
         data: data,
         options: _cookie != null
             ? Options(
-                headers: {..._dio.options.headers, "Cookie": _cookie},
+                headers: {...dio.options.headers, "Cookie": _cookie},
                 contentType: Headers.formUrlEncodedContentType, //设置为application/x-www-form-urlencoded
               )
-            : null,
+            : Options(
+                contentType: Headers.formUrlEncodedContentType, //设置为application/x-www-form-urlencoded
+              ),
       );
+
+      // ✅ 与 GET 一样：手动处理 302 重定向（否则可能拿不到最终 Cookie）
+      final raw = await _checkRedirects(response);
+
       String decodedHtml;
       switch (charsetsType) {
         case CharsetsType.gbk:
           {
-            decodedHtml = GbkCodec().decode(response.data as Uint8List);
+            decodedHtml = GbkCodec().decode(raw as Uint8List);
           }
         case CharsetsType.big5Hkscs:
           {
-            decodedHtml = Big5Codec().decode(response.data as Uint8List);
+            decodedHtml = Big5Codec().decode(raw as Uint8List);
           }
       }
       return Success(decodedHtml);
@@ -176,22 +231,4 @@ class Request {
     }
   }
 
-  static Future<Response> postFormToMewxWenku8Directly({required String request, required CharsetsType charsetsType, required CancelToken cancelToken}) {
-    switch (charsetsType) {
-      case CharsetsType.gbk:
-        request += "&t=0";
-        break;
-      case CharsetsType.big5Hkscs:
-        request += "&t=1";
-        break;
-    }
-    return _mewxWenku8Dio.post(
-      "https://wenku8-relay.mewx.org",
-      data: _getMewxWenku8PostForm(request),
-      options: Options(
-        contentType: Headers.formUrlEncodedContentType, //设置为application/x-www-form-urlencoded
-        responseType: ResponseType.plain,
-      ),
-    );
-  }
 }

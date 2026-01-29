@@ -19,7 +19,6 @@ import 'package:ttf_metadata/ttf_metadata.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../common/database/database.dart';
-import '../../common/log.dart';
 import '../../models/cat_volume.dart';
 import '../../models/page_state.dart';
 import '../../network/api.dart';
@@ -75,6 +74,11 @@ class ReaderController extends GetxController {
   ///竖向模式下，显示当前阅读进度的百分比
   RxInt verticalProgress = 0.obs;
 
+  ///Debounce workers (avoid creating new debounce workers on every scroll/page change)
+  late final Worker _locationDebounceWorker;
+  late final Worker _indexDebounceWorker;
+
+
   ///文本内容
   RxString text = "".obs;
 
@@ -95,6 +99,20 @@ class ReaderController extends GetxController {
   @override
   void onInit() async {
     super.onInit();
+
+    // Create debounce workers only once. Do NOT create them inside scroll/page callbacks.
+    _locationDebounceWorker = debounce(
+      location,
+      (_) => setReadHistory(),
+      time: const Duration(milliseconds: 500),
+    );
+
+    _indexDebounceWorker = debounce(
+      currentIndex,
+      (_) => setReadHistory(),
+      time: const Duration(milliseconds: 500),
+    );
+
 
     aid = _novelDetailController.aid;
     catalogue = _novelDetailController.novelDetail.value!.catalogue;
@@ -125,6 +143,8 @@ class ReaderController extends GetxController {
   void onClose() {
     if (readerSettingsState.value.wakeLock) WakelockPlus.toggle(enable: false);
     if (readerSettingsState.value.immersionMode) SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    _locationDebounceWorker.dispose();
+    _indexDebounceWorker.dispose();
     super.onClose();
   }
 
@@ -171,9 +191,10 @@ class ReaderController extends GetxController {
     switch (result) {
       case Success():
         {
-          images.value = Parser.getImageFromContent(result.data);
+          final content = await compute(Parser.getContent, result.data as String);
+          images.value = content.images;
           chapterTitle.value = catalogue[currentVolumeIndex].chapters[currentChapterIndex].title;
-          text.value = await compute(_extractContent, result.data as String);
+          text.value = content.text;
 
           pageState.value = PageState.success;
         }
@@ -186,9 +207,10 @@ class ReaderController extends GetxController {
   }
 
   Future<void> _getContentByLocal(String result) async {
-    images.value = Parser.getImageFromContent(result);
+    final content = await compute(Parser.getContent, result);
+    images.value = content.images;
     chapterTitle.value = catalogue[currentVolumeIndex].chapters[currentChapterIndex].title;
-    text.value = await compute(_extractContent, result);
+    text.value = content.text;
     pageState.value = PageState.success;
   }
 
@@ -533,52 +555,6 @@ class ReaderController extends GetxController {
       await fontsDir.delete(recursive: true);
     }
   }
-}
-
-String _extractContent(String text) {
-  //如果文本中含有图片占位符，可选地进行处理
-  final regex = RegExp(r'<!--image-->.*?<!--image-->', dotAll: true);
-  text = text.replaceAll(regex, '');
-
-  List<String> lines = text.split('\n');
-  bool titleSkipped = false; //标记是否跳过了标题
-  List<String> contentLines = [];
-
-  for (String line in lines) {
-    String trimmedLine = line.trim();
-
-    //首先跳过标题部分：第一个非空行为标题
-    if (!titleSkipped) {
-      if (trimmedLine.isNotEmpty) {
-        titleSkipped = true;
-      }
-      continue;
-    }
-
-    //保留段落分隔符
-    if (trimmedLine.isEmpty) {
-      //如果结果列表已经有内容，并且上一行不是空行，则添加一个空行作为段落分隔符
-      if (contentLines.isNotEmpty && contentLines.last.isNotEmpty) {
-        contentLines.add('');
-      }
-    } else {
-      //非空行，直接添加
-      contentLines.add(line);
-    }
-  }
-
-  //移除末尾多余的空行
-  while (contentLines.isNotEmpty && contentLines.last.isEmpty) {
-    contentLines.removeLast();
-  }
-
-  //移除开头多余的空行（如果有）
-  while (contentLines.isNotEmpty && contentLines.first.isEmpty) {
-    contentLines.removeAt(0);
-  }
-
-  //将处理后的各行以换行符拼接返回
-  return contentLines.join('\n');
 }
 
 class ReaderSettingsState {

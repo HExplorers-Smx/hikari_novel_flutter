@@ -4,7 +4,7 @@
     <img src="./assets/images/logo_transparent.png" alt="Logo" height="250">
   </div>
 
-  # Hikari Novel
+# Hikari Novel
 
   <p align="center"><font>使用flutter构建的第三方轻小说文库客户端</font></p>
 
@@ -13,7 +13,7 @@
     <img alt="License" src="https://img.shields.io/badge/License-MIT-Green?style=for-the-badge&color=rgb(164%2C25%2C49)">
     <a href="https://t.me/+CUSABNkX5U83NGNl"><img alt="Static Badge" src="https://img.shields.io/badge/Telegram-Join%20Group-blue?style=for-the-badge&logo=telegram"></a>
   </div>
-  
+
 </div>
 
 ## 功能
@@ -55,9 +55,9 @@
     ```
 - ##### 编译
     - Windows
-        > 因使用了flutter_inappwebview框架，所以您需要确保您的电脑上安装了nuget，如没有可以使用winget进行安装`winget install Microsoft.NuGet`
+      > 因使用了flutter_inappwebview框架，所以您需要确保您的电脑上安装了nuget，如没有可以使用winget进行安装`winget install Microsoft.NuGet`
     - 其他平台
-        > 请自行调整
+      > 请自行调整
 
 
 ## 声明

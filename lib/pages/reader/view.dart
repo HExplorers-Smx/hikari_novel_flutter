@@ -3,16 +3,18 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:hikari_novel_flutter/models/reader_direction.dart';
 import 'package:hikari_novel_flutter/pages/reader/controller.dart';
+import 'package:hikari_novel_flutter/pages/reader/audiobook_controller.dart';
+import 'package:hikari_novel_flutter/tts/audiobook_tts_service.dart';
 import 'package:hikari_novel_flutter/pages/reader/widgets/custom_header.dart';
 import 'package:hikari_novel_flutter/pages/reader/widgets/custom_slider.dart';
 import 'package:hikari_novel_flutter/pages/reader/widgets/horizontal_read_page.dart';
 import 'package:hikari_novel_flutter/pages/reader/widgets/reader_background.dart';
 import 'package:hikari_novel_flutter/pages/reader/widgets/vertical_read_page.dart';
 import 'package:hikari_novel_flutter/widgets/state_page.dart';
+import 'package:hikari_novel_flutter/tts/role_classifier.dart';
 import 'package:intl/intl.dart';
 
 import '../../common/constants.dart';
-import '../../common/log.dart';
 import '../../models/page_state.dart';
 import '../../router/route_path.dart';
 
@@ -20,22 +22,23 @@ class ReaderPage extends StatelessWidget {
   ReaderPage({super.key});
 
   final controller = Get.put(ReaderController());
+  final audioCtrl = Get.put(ReaderAudiobookController());
 
   EdgeInsets get padding => EdgeInsets.fromLTRB(
-    controller.readerSettingsState.value.leftMargin,
-    controller.readerSettingsState.value.topMargin,
-    controller.readerSettingsState.value.rightMargin,
-    controller.readerSettingsState.value.showStatusBar
-        ? controller.readerSettingsState.value.bottomMargin + kStatusBarPadding
-        : controller.readerSettingsState.value.bottomMargin,
-  );
+        controller.readerSettingsState.value.leftMargin,
+        controller.readerSettingsState.value.topMargin,
+        controller.readerSettingsState.value.rightMargin,
+        controller.readerSettingsState.value.showStatusBar
+            ? controller.readerSettingsState.value.bottomMargin + kStatusBarPadding
+            : controller.readerSettingsState.value.bottomMargin,
+      );
 
   TextStyle get textStyle => TextStyle(
-    fontFamily: controller.readerSettingsState.value.textFamily,
-    height: controller.readerSettingsState.value.lineSpacing,
-    fontSize: controller.readerSettingsState.value.fontSize,
-    color: controller.currentTextColor.value ?? Theme.of(Get.context!).colorScheme.onSurface,
-  );
+        fontFamily: controller.readerSettingsState.value.textFamily,
+        height: controller.readerSettingsState.value.lineSpacing,
+        fontSize: controller.readerSettingsState.value.fontSize,
+        color: controller.currentTextColor.value ?? Theme.of(Get.context!).colorScheme.onSurface,
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -52,9 +55,13 @@ class ReaderPage extends StatelessWidget {
                   child: Obx(
                     () => Padding(
                       padding: EdgeInsets.only(
-                        bottom: controller.readerSettingsState.value.showStatusBar ? kStatusBarPadding + MediaQuery.of(context).padding.bottom : 0,
+                        bottom: controller.readerSettingsState.value.showStatusBar
+                            ? kStatusBarPadding + MediaQuery.of(context).padding.bottom
+                            : 0,
                       ),
-                      child: controller.readerSettingsState.value.direction == ReaderDirection.upToDown ? _buildVertical(context) : _buildHorizontal(context),
+                      child: controller.readerSettingsState.value.direction == ReaderDirection.upToDown
+                          ? _buildVertical(context)
+                          : _buildHorizontal(context),
                     ),
                   ),
                 ),
@@ -62,28 +69,39 @@ class ReaderPage extends StatelessWidget {
             ),
           ),
           Obx(() {
+            final bool isIgnoring = controller.pageState.value != PageState.success;
+            final bool isOffstage = controller.readerSettingsState.value.direction == ReaderDirection.upToDown;
+
             return Positioned.fill(
               child: Offstage(
-                offstage: controller.readerSettingsState.value.direction == ReaderDirection.upToDown,
+                offstage: isOffstage,
+                //确保IgnorePointer的hitTestBehavior正确
                 child: IgnorePointer(
-                  ignoring: controller.pageState.value != PageState.success,
+                  ignoring: isIgnoring,
                   child: Row(
                     children: [
                       Expanded(
                         flex: 1,
                         child: GestureDetector(
+                          //根据ignoring状态禁用GestureDetector
+                          onTap: isIgnoring
+                              ? null
+                              : () => controller.readerSettingsState.value.direction == ReaderDirection.leftToRight
+                                  ? controller.prevPage()
+                                  : controller.nextPage(),
                           behavior: HitTestBehavior.translucent,
-                          onTap: () =>
-                              controller.readerSettingsState.value.direction == ReaderDirection.leftToRight ? controller.prevPage() : controller.nextPage(),
                         ),
                       ),
-                      Expanded(flex: 1, child: Container()),
+                      const Expanded(flex: 1, child: SizedBox()),
                       Expanded(
                         flex: 1,
                         child: GestureDetector(
+                          onTap: isIgnoring
+                              ? null
+                              : () => controller.readerSettingsState.value.direction == ReaderDirection.leftToRight
+                                  ? controller.nextPage()
+                                  : controller.prevPage(),
                           behavior: HitTestBehavior.translucent,
-                          onTap: () =>
-                              controller.readerSettingsState.value.direction == ReaderDirection.leftToRight ? controller.nextPage() : controller.prevPage(),
                         ),
                       ),
                     ],
@@ -108,7 +126,11 @@ class ReaderPage extends StatelessWidget {
               left: 0,
               right: 0,
               duration: Duration(milliseconds: 100),
-              child: AppBar(backgroundColor: Theme.of(context).colorScheme.secondaryContainer, title: Text(controller.chapterTitle.value), titleSpacing: 0),
+              child: AppBar(
+                backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
+                title: Text(controller.chapterTitle.value),
+                titleSpacing: 0,
+              ),
             );
           }),
           Obx(() {
@@ -145,7 +167,22 @@ class ReaderPage extends StatelessWidget {
                           child: IconButton(onPressed: () => _showCatalogue(context), icon: const Icon(Icons.list_alt)),
                         ),
                         Expanded(
-                          child: IconButton(onPressed: () => Get.toNamed(RoutePath.readerSetting), icon: const Icon(Icons.settings_outlined)),
+                          child: IconButton(
+                              onPressed: () => Get.toNamed(RoutePath.readerSetting),
+                              icon: const Icon(Icons.settings_outlined)),
+                        ),
+                        // 听书按钮（严格：在设置按钮右侧）
+                        Expanded(
+                          child: Obx(() {
+                            final tts = Get.find<AudiobookTtsService>();
+                            final icon =
+                                tts.isActive.value && tts.isPlaying.value ? Icons.pause_circle : Icons.play_circle;
+                            return IconButton(
+                              tooltip: '听书',
+                              onPressed: () => audioCtrl.togglePlay(controller),
+                              icon: Icon(icon),
+                            );
+                          }),
                         ),
                         Expanded(
                           child: IconButton(
@@ -166,9 +203,65 @@ class ReaderPage extends StatelessWidget {
               ),
             );
           }),
+          _buildFloatingTtsBar(context),
         ],
       ),
     );
+  }
+
+  Widget _buildFloatingTtsBar(BuildContext context) {
+    return Obx(() {
+      final tts = Get.find<AudiobookTtsService>();
+      if (!tts.isActive.value) return const SizedBox.shrink();
+
+      // 旧版 Dart 兼容写法：不用 switch 表达式，避免 release 编译报 Not a constant expression
+      final role = tts.currentRole.value;
+      String label;
+      if (role == SpeakerRole.female) {
+        label = '女声朗读中…';
+      } else if (role == SpeakerRole.male) {
+        label = '男声朗读中…';
+      } else {
+        label = '旁白朗读中…';
+      }
+
+      return Positioned(
+        left: 12,
+        right: 12,
+        bottom: MediaQuery.of(context).padding.bottom + 12,
+        child: Material(
+          elevation: 6,
+          borderRadius: BorderRadius.circular(16),
+          color: Theme.of(context).colorScheme.surface,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => tts.isPlaying.value ? tts.pause() : tts.resume(),
+                  icon: Icon(tts.isPlaying.value ? Icons.pause : Icons.play_arrow),
+                ),
+                IconButton(
+                  onPressed: () => audioCtrl.stop(),
+                  icon: const Icon(Icons.stop),
+                ),
+                IconButton(
+                  onPressed: () => Get.toNamed(RoutePath.audiobookSetting),
+                  icon: const Icon(Icons.tune),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    });
   }
 
   Widget _buildVertical(BuildContext context) {
@@ -180,7 +273,8 @@ class ReaderPage extends StatelessWidget {
           header: MaterialHeader2(
             triggerOffset: 80,
             child: Container(
-              decoration: BoxDecoration(color: Theme.of(context).colorScheme.primaryContainer, borderRadius: BorderRadius.circular(24)),
+              decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primaryContainer, borderRadius: BorderRadius.circular(24)),
               padding: const EdgeInsets.all(12),
               child: Icon(Icons.arrow_circle_up, color: Theme.of(context).colorScheme.primary),
             ),
@@ -188,7 +282,8 @@ class ReaderPage extends StatelessWidget {
           footer: MaterialFooter2(
             triggerOffset: 80,
             child: Container(
-              decoration: BoxDecoration(color: Theme.of(context).colorScheme.primaryContainer, borderRadius: BorderRadius.circular(24)),
+              decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primaryContainer, borderRadius: BorderRadius.circular(24)),
               padding: const EdgeInsets.all(12),
               child: Icon(Icons.arrow_circle_down, color: Theme.of(context).colorScheme.primary),
             ),
@@ -204,7 +299,8 @@ class ReaderPage extends StatelessWidget {
             style: textStyle,
             controller: controller.scrollController,
             onScroll: (position, max) {
-              if (max == 0 && position == 0) { //仅一页的情况下
+              if (max == 0 && position == 0) {
+                //仅一页的情况下
                 controller.location.value = 0;
                 controller.verticalProgress.value = 100;
                 controller.setReadHistory(); //立即更新历史阅读记录
@@ -212,7 +308,6 @@ class ReaderPage extends StatelessWidget {
                 controller.location.value = position.toInt();
                 controller.verticalProgress.value = ((position.toInt() / max.toInt()) * 100).toInt();
                 //延迟更新阅读记录
-                debounce(controller.location, (_) => controller.setReadHistory(), time: const Duration(milliseconds: 500));
               }
             },
           ),
@@ -255,16 +350,17 @@ class ReaderPage extends StatelessWidget {
         onPageChanged: (index, max) {
           controller.currentIndex.value = index;
           controller.maxPage.value = max;
-          if (max == 1 && index == 0) { //仅一页的情况下
+          if (max == 1 && index == 0) {
+            //仅一页的情况下
             controller.horizontalProgress.value = 100;
             controller.setReadHistory(); //立即更新历史阅读记录
           } else if (max > 0) {
             controller.horizontalProgress.value = int.parse(((index + 1) / max * 100.0).toStringAsFixed(0));
             //延迟更新阅读记录
-            debounce(controller.currentIndex, (_) => controller.setReadHistory(), time: const Duration(milliseconds: 500));
           }
         },
-        onViewImage: (index) => Get.toNamed(RoutePath.photo, arguments: {"gallery_mode": true, "list": controller.images, "index": index}),
+        onViewImage: (index) =>
+            Get.toNamed(RoutePath.photo, arguments: {"gallery_mode": true, "list": controller.images, "index": index}),
       ),
     );
   }
@@ -310,7 +406,9 @@ class ReaderPage extends StatelessWidget {
               SizedBox(
                 width: 60,
                 child: Center(
-                  child: controller.readerSettingsState.value.direction == ReaderDirection.leftToRight ? Text(value.toString()) : Text(max.toString()),
+                  child: controller.readerSettingsState.value.direction == ReaderDirection.leftToRight
+                      ? Text(value.toString())
+                      : Text(max.toString()),
                 ),
               ),
               Expanded(
@@ -327,7 +425,9 @@ class ReaderPage extends StatelessWidget {
               SizedBox(
                 width: 60,
                 child: Center(
-                  child: controller.readerSettingsState.value.direction == ReaderDirection.leftToRight ? Text(max.toString()) : Text(value.toString()),
+                  child: controller.readerSettingsState.value.direction == ReaderDirection.leftToRight
+                      ? Text(max.toString())
+                      : Text(value.toString()),
                 ),
               ),
             ],
@@ -374,7 +474,9 @@ class ReaderPage extends StatelessWidget {
                               volumeIndex == controller.currentVolumeIndex && chapterIndex == controller.currentChapterIndex
                                   ? Row(
                                       children: [
-                                        SizedBox(height: 22, child: Icon(Icons.arrow_circle_right, color: Theme.of(context).colorScheme.primary)),
+                                        SizedBox(
+                                            height: 22,
+                                            child: Icon(Icons.arrow_circle_right, color: Theme.of(context).colorScheme.primary)),
                                         const SizedBox(width: 10),
                                       ],
                                     )

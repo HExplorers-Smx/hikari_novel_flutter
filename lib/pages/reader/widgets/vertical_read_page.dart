@@ -1,9 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
-import '../../../common/log.dart';
 import '../../../router/route_path.dart';
 import '../../../network/request.dart';
 
@@ -16,7 +17,13 @@ class VerticalReadPage extends StatefulWidget {
   final ScrollController controller;
   final Function(double position, double max) onScroll;
 
-  const VerticalReadPage(this.text, this.images, {required this.initPosition, required this.padding, required this.style, required this.controller, required this.onScroll, super.key});
+  const VerticalReadPage(this.text, this.images,
+      {required this.initPosition,
+      required this.padding,
+      required this.style,
+      required this.controller,
+      required this.onScroll,
+      super.key});
 
   @override
   State<StatefulWidget> createState() => _VerticalReadPageState();
@@ -33,6 +40,14 @@ class _VerticalReadPageState extends State<VerticalReadPage> with WidgetsBinding
 
   late String _lastLayoutSig;
 
+  // Paragraph virtualization: avoid laying out a single giant Text.
+  List<String> _paragraphs = const [];
+
+  // Throttle scroll progress reporting to avoid rebuilding heavy UI too frequently.
+  Timer? _scrollTimer;
+  double _pendingPixels = 0;
+  double _pendingMax = 0;
+
   @override
   void initState() {
     super.initState();
@@ -44,8 +59,33 @@ class _VerticalReadPageState extends State<VerticalReadPage> with WidgetsBinding
 
   @override
   void dispose() {
+    _scrollTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  void _scheduleOnScroll(double pixels, double max) {
+    _pendingPixels = pixels;
+    _pendingMax = max;
+    if (_scrollTimer != null) return;
+    // 80ms throttle gives a smooth progress update while keeping scroll buttery.
+    _scrollTimer = Timer(const Duration(milliseconds: 80), () {
+      _scrollTimer = null;
+      widget.onScroll(_pendingPixels, _pendingMax);
+    });
+  }
+
+  List<String> _splitParagraphs(String raw) {
+    // Normalize newlines and split. Keep short empty lines out.
+    final t = raw.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+    final parts = t.split(RegExp(r'\n+'));
+    final out = <String>[];
+    for (final p in parts) {
+      final s = p.trim();
+      if (s.isNotEmpty) out.add(s);
+    }
+    // If everything got trimmed away, keep original to avoid blank page.
+    return out.isEmpty ? [raw] : out;
   }
 
   void resetPage() {
@@ -53,15 +93,25 @@ class _VerticalReadPageState extends State<VerticalReadPage> with WidgetsBinding
     textStyle = widget.style;
     images = List<String>.from(widget.images); //转换为纯净的List<String>
     padding = widget.padding;
+
     if (text.isEmpty && images.isEmpty) {
       position = 0;
+      _paragraphs = const [];
       setState(() {});
       return;
     }
 
+    // Build paragraphs once per chapter/settings change.
+    _paragraphs = _splitParagraphs(text);
+
+    setState(() {});
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      widget.controller.jumpTo(widget.initPosition.toDouble());
-      widget.onScroll(widget.controller.offset, widget.controller.position.maxScrollExtent); //页面加载完成时，提醒保存进度
+      // Restore scroll position after layout.
+      if (widget.controller.hasClients) {
+        widget.controller.jumpTo(widget.initPosition.toDouble());
+        _scheduleOnScroll(widget.controller.offset, widget.controller.position.maxScrollExtent); //页面加载完成时，提醒保存进度
+      }
     });
   }
 
@@ -74,7 +124,8 @@ class _VerticalReadPageState extends State<VerticalReadPage> with WidgetsBinding
     final newSig = _layoutSignature();
     if (newSig != _lastLayoutSig) {
       _lastLayoutSig = newSig;
-      if (widget.text != oldWidget.text && listEquals(widget.images, oldWidget.images)) { //判断章节是否切换
+      if (widget.text != oldWidget.text && listEquals(widget.images, oldWidget.images)) {
+        //判断章节是否切换
         setState(() {});
       }
       resetPage();
@@ -85,45 +136,72 @@ class _VerticalReadPageState extends State<VerticalReadPage> with WidgetsBinding
   Widget build(BuildContext context) {
     return NotificationListener<ScrollUpdateNotification>(
       onNotification: (notification) {
-        widget.onScroll(notification.metrics.pixels, notification.metrics.maxScrollExtent);
-        return true;
+        _scheduleOnScroll(notification.metrics.pixels, notification.metrics.maxScrollExtent);
+        return false; // don't swallow notifications; keep scroll pipeline efficient
       },
-      child: SingleChildScrollView(
+      child: CustomScrollView(
         controller: widget.controller,
-        child: Padding(
-          padding: padding,
-          child: Column(
-            children: [
-              Text(text, textAlign: TextAlign.justify, style: textStyle),
-              images.isEmpty
-                  ? Container()
-                  : ListView.separated(
-                      //允许展开
-                      shrinkWrap: true,
-                      //禁止自身滚动
-                      physics: NeverScrollableScrollPhysics(),
-                      itemCount: images.length,
-                      padding: EdgeInsets.zero,
-                      separatorBuilder: (_, i) => SizedBox(height: 20),
-                      itemBuilder: (_, i) {
-                        return GestureDetector(
-                          onDoubleTap: () => Get.toNamed(RoutePath.photo, arguments: {"gallery_mode": true, "list": images, "index": i}),
-                          onLongPress: () => Get.toNamed(RoutePath.photo, arguments: {"gallery_mode": true, "list": images, "index": i}),
-                          child: CachedNetworkImage(
-                            width: double.infinity,
-                            imageUrl: images[i],
-                            httpHeaders: Request.userAgent,
-                            fit: BoxFit.fitWidth,
-                            progressIndicatorBuilder: (context, url, downloadProgress) =>
-                                Center(child: CircularProgressIndicator(value: downloadProgress.progress)),
-                            errorWidget: (context, url, error) => Column(children: [Icon(Icons.error_outline), Text(error.toString())]),
-                          ),
-                        );
-                      },
-                    ),
-            ],
+        slivers: [
+          SliverPadding(
+            padding: padding,
+            sliver: SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (context, index) {
+                  // Insert small spacing between paragraphs to improve readability without heavy layout.
+                  if (index.isOdd) return const SizedBox(height: 10);
+                  final pIndex = index ~/ 2;
+                  return Text(
+                    _paragraphs.isEmpty ? text : _paragraphs[pIndex],
+                    textAlign: TextAlign.justify,
+                    style: textStyle,
+                  );
+                },
+                childCount: _paragraphs.isEmpty ? 1 : (_paragraphs.length * 2 - 1),
+              ),
+            ),
           ),
-        ),
+          if (images.isNotEmpty) ...[
+            const SliverToBoxAdapter(child: SizedBox(height: 20)),
+            SliverPadding(
+              padding: padding.copyWith(top: 0),
+              sliver: SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) {
+                    if (index.isOdd) return const SizedBox(height: 20);
+                    final imgIndex = index ~/ 2;
+                    return GestureDetector(
+                      onDoubleTap: () => Get.toNamed(
+                        RoutePath.photo,
+                        arguments: {"gallery_mode": true, "list": images, "index": imgIndex},
+                      ),
+                      onLongPress: () => Get.toNamed(
+                        RoutePath.photo,
+                        arguments: {"gallery_mode": true, "list": images, "index": imgIndex},
+                      ),
+                      child: CachedNetworkImage(
+                        width: double.infinity,
+                        imageUrl: images[imgIndex],
+                        httpHeaders: Request.userAgent,
+                        fit: BoxFit.fitWidth,
+                        // Avoid per-byte progress rebuilds; keep a lightweight placeholder.
+                        placeholder: (context, url) => const Center(
+                          child: Padding(
+                            padding: EdgeInsets.all(12),
+                            child: CircularProgressIndicator(),
+                          ),
+                        ),
+                        errorWidget: (context, url, error) => Column(
+                          children: [const Icon(Icons.error_outline), Text(error.toString())],
+                        ),
+                      ),
+                    );
+                  },
+                  childCount: images.isEmpty ? 0 : (images.length * 2 - 1),
+                ),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }

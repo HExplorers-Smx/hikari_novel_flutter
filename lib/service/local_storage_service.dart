@@ -23,6 +23,7 @@ class LocalStorageService extends GetxService {
       kUserInfo = "user_info",
       kUsername = "username",
       kPassword = "password",
+      kBiometricCheckInEnabled = "biometricCheckInEnabled",
       kLanguage = "language",
       kIsAutoCheckUpdate = "isAutoCheckUpdate",
       kWenku8Node = "wenku8Node",
@@ -52,7 +53,14 @@ class LocalStorageService extends GetxService {
       kReaderNightBgImage = "readerNightBgImage",
       kReaderTextFamily = "readerTextFamily",
       kReaderTextStyleFilePath = "readerTextStyleFilePath",
-      kReaderPageTurningAnimation = "readerPageTurningAnimation";
+      kReaderPageTurningAnimation = "readerPageTurningAnimation",
+      // ===== 听书 / TTS =====
+      kTtsMode = "ttsMode", // "azure" | "sherpa"
+      kAzureKey = "azureKey",
+      kAzureRegion = "azureRegion",
+      kVoiceNarrator = "voiceNarrator",
+      kVoiceFemale = "voiceFemale",
+      kVoiceMale = "voiceMale";
 
   Future<void> init() async {
     final Directory dir = await getApplicationSupportDirectory();
@@ -80,6 +88,10 @@ class LocalStorageService extends GetxService {
 
   String? getPassword() => _loginInfo.get(kPassword);
 
+  void setBiometricCheckInEnabled(bool enabled) => _setting.put(kBiometricCheckInEnabled, enabled);
+
+  bool getBiometricCheckInEnabled() => _setting.get(kBiometricCheckInEnabled, defaultValue: false);
+
   void setIsAutoCheckUpdate(bool enabled) => _setting.put(kIsAutoCheckUpdate, enabled);
 
   bool getIsAutoCheckUpdate() => _setting.get(kIsAutoCheckUpdate, defaultValue: true);
@@ -99,6 +111,31 @@ class LocalStorageService extends GetxService {
   void setIsRelativeTime(bool enabled) => _setting.put(kIsRelativeTime, enabled);
 
   bool getIsRelativeTime() => _setting.get(kIsRelativeTime, defaultValue: false);
+
+  // ===== 听书 / TTS =====
+  void setTtsMode(String mode) => _setting.put(kTtsMode, mode);
+
+  String getTtsMode() => _setting.get(kTtsMode, defaultValue: "azure");
+
+  void setAzureKey(String v) => _setting.put(kAzureKey, v);
+
+  String getAzureKey() => _setting.get(kAzureKey, defaultValue: "");
+
+  void setAzureRegion(String v) => _setting.put(kAzureRegion, v);
+
+  String getAzureRegion() => _setting.get(kAzureRegion, defaultValue: "eastasia");
+
+  void setVoiceNarrator(String v) => _setting.put(kVoiceNarrator, v);
+
+  String getVoiceNarrator() => _setting.get(kVoiceNarrator, defaultValue: "zh-CN-XiaoxiaoNeural");
+
+  void setVoiceFemale(String v) => _setting.put(kVoiceFemale, v);
+
+  String getVoiceFemale() => _setting.get(kVoiceFemale, defaultValue: "zh-CN-XiaoyiNeural");
+
+  void setVoiceMale(String v) => _setting.put(kVoiceMale, v);
+
+  String getVoiceMale() => _setting.get(kVoiceMale, defaultValue: "zh-CN-YunxiNeural");
 
   void setLanguage(Language value) => _setting.put(kLanguage, value.index);
 
