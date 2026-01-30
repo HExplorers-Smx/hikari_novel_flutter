@@ -58,14 +58,17 @@ class LocalStorageService extends GetxService {
       kReaderTextStyleFilePath = "readerTextStyleFilePath",
       kReaderPageTurningAnimation = "readerPageTurningAnimation",
       // ===== 听书 / TTS =====
-      kTtsMode = "ttsMode", // "azure" | "sherpa"
+      kTtsMode = "ttsMode", // "azure" | "sherpa" | "piper" | "system"
       kAzureKey = "azureKey",
       kAzureRegion = "azureRegion",
       kVoiceNarrator = "voiceNarrator",
       kVoiceFemale = "voiceFemale",
       kVoiceMale = "voiceMale",
       kRoleVoiceMappings = "roleVoiceMappings", // JSON 列表：角色名->(role/voice)
-      kSherpaModelDir = "sherpaModelDir"; // 离线 sherpa 模型目录（应用私有目录下的真实路径）
+      kSherpaModelDir = "sherpaModelDir", // 离线 sherpa 模型目录（应用私有目录下的真实路径）
+      kPiperVoicePack = "piperVoicePack", // Piper 内置语音包名（插件枚举名）
+      kPiperModelDir = "piperModelDir", // ✅ 新增：Piper 离线模型目录（用户导入后保存）
+      kSystemTtsLanguage = "systemTtsLanguage"; // 系统 TTS 语言，例如 zh-CN
 
   Future<void> init() async {
     final Directory dir = await getApplicationSupportDirectory();
@@ -78,68 +81,70 @@ class LocalStorageService extends GetxService {
   }
 
   void setCookie(String? value) => _loginInfo.put(kCookie, value);
-
   String? getCookie() => _loginInfo.get(kCookie);
 
   void setUserInfo(UserInfo value) => _setting.put(kUserInfo, value);
-
   UserInfo? getUserInfo() => _setting.get(kUserInfo);
 
   void setUsername(String value) => _loginInfo.put(kUsername, value);
-
   String? getUsername() => _loginInfo.get(kUsername);
 
   void setPassword(String value) => _loginInfo.put(kPassword, value);
-
   String? getPassword() => _loginInfo.get(kPassword);
 
   void setBiometricCheckInEnabled(bool enabled) => _setting.put(kBiometricCheckInEnabled, enabled);
-
   bool getBiometricCheckInEnabled() => _setting.get(kBiometricCheckInEnabled, defaultValue: false);
 
   void setIsAutoCheckUpdate(bool enabled) => _setting.put(kIsAutoCheckUpdate, enabled);
-
   bool getIsAutoCheckUpdate() => _setting.get(kIsAutoCheckUpdate, defaultValue: true);
 
   void setThemeMode(ThemeMode tm) => _setting.put(kThemeMode, tm.index);
-
   ThemeMode getThemeMode() => ThemeMode.values[_setting.get(kThemeMode, defaultValue: ThemeMode.system.index)];
 
   void setCustomColor(Color color) => _setting.put(kCustomColor, color.toARGB32());
-
   Color getCustomColor() => Color(_setting.get(kCustomColor, defaultValue: Colors.blue.toARGB32()));
 
   void setIsDynamicColor(bool enabled) => _setting.put(kIsDynamicColor, enabled);
-
   bool getIsDynamicColor() => _setting.get(kIsDynamicColor, defaultValue: true);
 
   void setIsRelativeTime(bool enabled) => _setting.put(kIsRelativeTime, enabled);
-
   bool getIsRelativeTime() => _setting.get(kIsRelativeTime, defaultValue: false);
 
   // ===== 听书 / TTS =====
   void setTtsMode(String mode) => _setting.put(kTtsMode, mode);
-
   String getTtsMode() => _setting.get(kTtsMode, defaultValue: "azure");
 
-  void setAzureKey(String v) => _setting.put(kAzureKey, v);
+  void setPiperVoicePack(String name) => _setting.put(kPiperVoicePack, name);
+  String getPiperVoicePack() => _setting.get(kPiperVoicePack, defaultValue: "norman");
 
+  // ===== Piper 离线模型目录（用户导入后保存的真实路径）=====
+  void setPiperModelDir(String? dirPath) {
+    if (dirPath == null || dirPath.trim().isEmpty) {
+      _setting.delete(kPiperModelDir);
+      return;
+    }
+    _setting.put(kPiperModelDir, dirPath.trim());
+  }
+
+  String? getPiperModelDir() => _setting.get(kPiperModelDir);
+  void clearPiperModelDir() => _setting.delete(kPiperModelDir);
+
+  void setSystemTtsLanguage(String lang) => _setting.put(kSystemTtsLanguage, lang);
+  String getSystemTtsLanguage() => _setting.get(kSystemTtsLanguage, defaultValue: "zh-CN");
+
+  void setAzureKey(String v) => _setting.put(kAzureKey, v);
   String getAzureKey() => _setting.get(kAzureKey, defaultValue: "");
 
   void setAzureRegion(String v) => _setting.put(kAzureRegion, v);
-
   String getAzureRegion() => _setting.get(kAzureRegion, defaultValue: "eastasia");
 
   void setVoiceNarrator(String v) => _setting.put(kVoiceNarrator, v);
-
   String getVoiceNarrator() => _setting.get(kVoiceNarrator, defaultValue: "zh-CN-XiaoxiaoNeural");
 
   void setVoiceFemale(String v) => _setting.put(kVoiceFemale, v);
-
   String getVoiceFemale() => _setting.get(kVoiceFemale, defaultValue: "zh-CN-XiaoyiNeural");
 
   void setVoiceMale(String v) => _setting.put(kVoiceMale, v);
-
   String getVoiceMale() => _setting.get(kVoiceMale, defaultValue: "zh-CN-YunxiNeural");
 
   // ===== 角色列表：用于自动识别“角色：台词”并切换音色（Azure 模式下最明显） =====
@@ -180,88 +185,67 @@ class LocalStorageService extends GetxService {
     setRoleVoiceMappings(list);
   }
 
-
-  
-
-// ===== sherpa-onnx 离线模型目录（用户导入后保存的真实路径）=====
-void setSherpaModelDir(String? dirPath) {
-  if (dirPath == null || dirPath.trim().isEmpty) {
-    _setting.delete(kSherpaModelDir);
-    return;
+  // ===== sherpa-onnx 离线模型目录（用户导入后保存的真实路径）=====
+  void setSherpaModelDir(String? dirPath) {
+    if (dirPath == null || dirPath.trim().isEmpty) {
+      _setting.delete(kSherpaModelDir);
+      return;
+    }
+    _setting.put(kSherpaModelDir, dirPath.trim());
   }
-  _setting.put(kSherpaModelDir, dirPath.trim());
-}
 
-String? getSherpaModelDir() => _setting.get(kSherpaModelDir, defaultValue: null);
+  String? getSherpaModelDir() => _setting.get(kSherpaModelDir, defaultValue: null);
+  void clearSherpaModelDir() => _setting.delete(kSherpaModelDir);
 
-void clearSherpaModelDir() => _setting.delete(kSherpaModelDir);
-
-void setLanguage(Language value) => _setting.put(kLanguage, value.index);
-
+  void setLanguage(Language value) => _setting.put(kLanguage, value.index);
   Language getLanguage() => Language.values[_setting.get(kLanguage, defaultValue: Language.followSystem.index)];
 
   void setWenku8Node(Wenku8Node value) => _setting.put(kWenku8Node, value.index);
-
   Wenku8Node getWenku8Node() => Wenku8Node.values[_setting.get(kWenku8Node, defaultValue: Wenku8Node.wwwWenku8Net.index)];
 
   ReaderDirection getReaderDirection() => ReaderDirection.values[_reader.get(kReaderDirection, defaultValue: ReaderDirection.upToDown.index)];
-
   void setReaderDirection(ReaderDirection value) => _reader.put(kReaderDirection, value.index);
 
   double getReaderFontSize() => _reader.get(kReaderFontSize, defaultValue: 16.0);
-
   void setReaderFontSize(double value) => _reader.put(kReaderFontSize, value);
 
   double getReaderLineSpacing() => _reader.get(kReaderLineSpacing, defaultValue: 1.5);
-
   void setReaderLineSpacing(double value) => _reader.put(kReaderLineSpacing, value);
 
   bool getReaderWakeLock() => _reader.get(kReaderWakeLock, defaultValue: false);
-
   void setReaderWakeLock(bool enabled) => _reader.put(kReaderWakeLock, enabled);
 
   double getReaderLeftMargin() => _reader.get(kReaderLeftMargin, defaultValue: 20.0);
-
   void setReaderLeftMargin(double value) => _reader.put(kReaderLeftMargin, value);
 
   double getReaderTopMargin() => _reader.get(kReaderTopMargin, defaultValue: 20.0);
-
   void setReaderTopMargin(double value) => _reader.put(kReaderTopMargin, value);
 
   double getReaderRightMargin() => _reader.get(kReaderRightMargin, defaultValue: 20.0);
-
   void setReaderRightMargin(double value) => _reader.put(kReaderRightMargin, value);
 
   double getReaderBottomMargin() => _reader.get(kReaderBottomMargin, defaultValue: 20.0);
-
   void setReaderBottomMargin(double value) => _reader.put(kReaderBottomMargin, value);
 
   DualPageMode getReaderDualPageMode() => DualPageMode.values[_reader.get(kReaderDualPageMode, defaultValue: DualPageMode.auto.index)];
-
   void setReaderDualPageMode(DualPageMode value) => _reader.put(kReaderDualPageMode, value.index);
 
   double getReaderDualPageSpacing() => _reader.get(kReaderDualPageSpacing, defaultValue: 20.0);
-
   void setReaderDualPageSpacing(double value) => _reader.put(kReaderDualPageSpacing, value);
 
   bool getReaderImmersionMode() => _reader.get(kReaderImmersionMode, defaultValue: false);
-
   void setReaderImmersionMode(bool enabled) => _reader.put(kReaderImmersionMode, enabled);
 
   bool getReaderStatusBar() => _reader.get(kReaderStatusBar, defaultValue: true);
-
   void setReaderStatusBar(bool enabled) => _reader.put(kReaderStatusBar, enabled);
 
   String? getReaderTextFamily() => _reader.get(kReaderTextFamily, defaultValue: null);
-
   void setReaderTextFamily(String? value) => _reader.put(kReaderTextFamily, value);
 
   String? getReaderTextStyleFilePath() => _reader.get(kReaderTextStyleFilePath, defaultValue: null);
-
   void setReaderTextStyleFilePath(String? value) => _reader.put(kReaderTextStyleFilePath, value);
 
   bool getReaderPageTurningAnimation() => _reader.get(kReaderPageTurningAnimation, defaultValue: true);
-
   void setReaderPageTurningAnimation(bool enabled) => _reader.put(kReaderPageTurningAnimation, enabled);
 
   Color? getReaderDayBgColor() {
@@ -293,10 +277,8 @@ void setLanguage(Language value) => _setting.put(kLanguage, value.index);
   void setReaderNightTextColor(Color? value) => _reader.put(kReaderNightTextColor, value?.toARGB32());
 
   String? getReaderDayBgImage() => _reader.get(kReaderDayBgImage, defaultValue: null);
-
   void setReaderDayBgImage(String? value) => _reader.put(kReaderDayBgImage, value);
 
   String? getReaderNightBgImage() => _reader.get(kReaderDayBgImage, defaultValue: null);
-
   void setReaderNightBgImage(String? value) => _reader.put(kReaderDayBgImage, value);
 }

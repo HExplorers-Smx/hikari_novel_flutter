@@ -53,6 +53,15 @@ dependencies:
 
   # 离线高质量 TTS（Android 优先）：sherpa-onnx
   sherpa_onnx: ^1.12.23
+
+  # 系统 TTS 兜底（调用 Android 系统朗读）
+  flutter_tts: ^4.2.4
+
+  # Piper 离线 TTS（Android/Windows）
+  piper_tts_plugin:
+    git:
+      url: https://github.com/dev-6768/piper_tts_plugin.git
+      ref: dev-6768-v0.0.3
 dev_dependencies:
   flutter_test:
     sdk: flutter

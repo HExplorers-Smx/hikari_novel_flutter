@@ -38,6 +38,9 @@ class SherpaModelCheckResult {
 class SherpaModelManager {
   static const String kModelRootRelative = 'tts_models/sherpa_matcha_zh';
 
+  /// 递归扫描最大深度：避免用户误选 Download 根目录导致遍历太大
+  static const int kMaxDiscoverDepth = 4;
+
   /// 获取应用私有目录下的模型根目录（真实可读写路径）
   static Future<Directory> getModelRootDir() async {
     final support = await getApplicationSupportDirectory();
@@ -57,14 +60,21 @@ class SherpaModelManager {
   ///
   /// 返回复制后的目录。
   static Future<Directory> importModelDirectory(String sourceDirPath) async {
-    final src = Directory(sourceDirPath);
+    // 允许用户选择上层目录：这里会递归寻找真正的模型目录
+    final check = await checkModelDir(sourceDirPath);
+    if (!check.ok || check.model == null) {
+      throw Exception(check.message);
+    }
+
+    final src = Directory(check.model!.dirPath);
     if (!await src.exists()) {
-      throw Exception('源目录不存在：$sourceDirPath');
+      throw Exception('源目录不存在：${check.model!.dirPath}');
     }
 
     final root = await ensureModelRootDir();
 
-    final baseName = p.basename(sourceDirPath);
+    // 目标目录命名：优先使用“真实模型目录”的文件夹名，避免用户选上层目录导致命名怪异
+    final baseName = p.basename(check.model!.dirPath);
     final safeName = _sanitizeFolderName(baseName.isEmpty ? 'model' : baseName);
     final ts = DateTime.now().millisecondsSinceEpoch;
 
@@ -102,18 +112,51 @@ class SherpaModelManager {
   /// 检查一个模型目录是否完整，并返回关键文件路径。
   ///
   /// 规则：
-  /// - 至少一个 .onnx
-  /// - tokens.txt 必须存在
-  /// - lexicon.txt 必须存在
+  /// - 允许用户选择上层目录：会在所选目录及其子目录中递归寻找真正的模型目录
+  /// - 模型目录内至少一个 .onnx
+  /// - tokens.txt 必须存在（同层）
+  /// - lexicon.txt 必须存在（同层）
   static Future<SherpaModelCheckResult> checkModelDir(String dirPath) async {
-    final dir = Directory(dirPath);
-    if (!await dir.exists()) {
-      return SherpaModelCheckResult(ok: false, message: '目录不存在', model: null);
+    final root = Directory(dirPath);
+    if (!await root.exists()) {
+      return SherpaModelCheckResult(ok: false, message: '目录不存在：$dirPath', model: null);
     }
 
-    final files = await _listFilesRecursively(dir);
-    final onnx = files.where((f) => f.path.toLowerCase().endsWith('.onnx')).toList();
-    if (onnx.isEmpty) {
+    // 1) 先尝试：当前目录就是模型目录（最快）
+    final flat = await _checkModelDirFlat(root);
+    if (flat.ok) return flat;
+
+    // 2) 再递归向下寻找
+    final found = await _discoverFirstValidModelDir(root, depth: 0);
+    if (found != null) {
+      return SherpaModelCheckResult(ok: true, message: 'OK', model: found);
+    }
+
+    return SherpaModelCheckResult(
+      ok: false,
+      message: '未在所选目录及其子目录中找到可用模型。\n请确保某一层目录内至少包含：*.onnx / tokens.txt / lexicon.txt',
+      model: null,
+    );
+  }
+
+  /// 仅检查“这一层目录”是否为模型目录（不递归）
+  static Future<SherpaModelCheckResult> _checkModelDirFlat(Directory dir) async {
+    final entities = await dir.list(followLinks: false).toList();
+    final files = <File>[];
+    for (final e in entities) {
+      if (e is File) files.add(e);
+    }
+
+    String? onnxPath;
+    for (final f in files) {
+      final lower = f.path.toLowerCase();
+      if (lower.endsWith('.onnx')) {
+        onnxPath = f.path;
+        break;
+      }
+    }
+
+    if (onnxPath == null) {
       return SherpaModelCheckResult(ok: false, message: '缺少 .onnx 模型文件', model: null);
     }
 
@@ -127,15 +170,45 @@ class SherpaModelManager {
       return SherpaModelCheckResult(ok: false, message: '缺少 lexicon.txt', model: null);
     }
 
-    final onnxPath = onnx.first.path;
-    final model = SherpaModelInfo(
-      dirPath: dir.path,
-      onnxPath: onnxPath,
-      tokensPath: tokens.path,
-      lexiconPath: lexicon.path,
+    return SherpaModelCheckResult(
+      ok: true,
+      message: 'OK',
+      model: SherpaModelInfo(
+        dirPath: dir.path,
+        onnxPath: onnxPath,
+        tokensPath: tokens.path,
+        lexiconPath: lexicon.path,
+      ),
     );
+  }
 
-    return SherpaModelCheckResult(ok: true, message: 'OK', model: model);
+  /// 在 root 及其子目录中递归寻找第一个合法模型目录
+  static Future<SherpaModelInfo?> _discoverFirstValidModelDir(
+    Directory root, {
+    required int depth,
+  }) async {
+    if (depth > kMaxDiscoverDepth) return null;
+
+    // 跳过隐藏目录，减少无意义扫描
+    final name = p.basename(root.path);
+    if (name.startsWith('.')) return null;
+
+    // 当前层尝试
+    final flat = await _checkModelDirFlat(root);
+    if (flat.ok && flat.model != null) return flat.model;
+
+    // 深度优先：子目录按名称排序，保证结果稳定
+    final subs = <Directory>[];
+    await for (final ent in root.list(followLinks: false)) {
+      if (ent is Directory) subs.add(ent);
+    }
+    subs.sort((a, b) => a.path.compareTo(b.path));
+
+    for (final sub in subs) {
+      final got = await _discoverFirstValidModelDir(sub, depth: depth + 1);
+      if (got != null) return got;
+    }
+    return null;
   }
 
   /// 删除根目录下所有导入的模型（谨慎使用）

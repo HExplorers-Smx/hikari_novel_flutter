@@ -9,6 +9,8 @@ import '../../service/local_storage_service.dart';
 import '../../models/tts/role_voice_mapping.dart';
 import '../../tts/role_classifier.dart';
 import '../../tts/sherpa_model_manager.dart';
+import '../../tts/piper_model_manager.dart';
+import '../../tts/audiobook_tts_service.dart';
 
 class AudiobookSettingPage extends StatefulWidget {
   const AudiobookSettingPage({super.key});
@@ -27,7 +29,12 @@ class _AudiobookSettingPageState extends State<AudiobookSettingPage> {
   late final TextEditingController femaleVoiceCtrl;
   late final TextEditingController maleVoiceCtrl;
 
-  late String mode; // "azure" | "sherpa"
+  late String mode; // "azure" | "sherpa" | "piper" | "system"
+
+  late String piperVoicePack;
+  late String systemTtsLanguage;
+
+  String? piperModelDir;
 
   List<RoleVoiceMapping> roleMappings = [];
 
@@ -35,7 +42,9 @@ class _AudiobookSettingPageState extends State<AudiobookSettingPage> {
   void initState() {
     super.initState();
     mode = ls.getTtsMode();
-    if (mode == 'piper') mode = 'sherpa';
+    piperVoicePack = ls.getPiperVoicePack();
+    systemTtsLanguage = ls.getSystemTtsLanguage();
+    piperModelDir = ls.getPiperModelDir();
     keyCtrl = TextEditingController(text: ls.getAzureKey());
     regionCtrl = TextEditingController(text: ls.getAzureRegion());
 
@@ -58,13 +67,120 @@ class _AudiobookSettingPageState extends State<AudiobookSettingPage> {
 
   void _save() {
     ls.setTtsMode(mode);
+    ls.setPiperVoicePack(piperVoicePack);
+    ls.setSystemTtsLanguage(systemTtsLanguage);
     ls.setAzureKey(keyCtrl.text.trim());
     ls.setAzureRegion(regionCtrl.text.trim());
     ls.setVoiceNarrator(narratorVoiceCtrl.text.trim());
     ls.setVoiceFemale(femaleVoiceCtrl.text.trim());
     ls.setVoiceMale(maleVoiceCtrl.text.trim());
     ls.setRoleVoiceMappings(roleMappings);
+    // Piper 本地模型路径是导入/清除时即时写入的，这里只同步 UI 缓存
+    piperModelDir = ls.getPiperModelDir();
     Get.snackbar("已保存", "听书设置已保存");
+  }
+
+  Future<void> _importPiperModel() async {
+    if (!Platform.isAndroid && !Platform.isWindows) {
+      Get.snackbar('当前平台不支持', 'Piper 离线模型目前仅支持 Android/Windows');
+      return;
+    }
+
+    // 选择 onnx 文件（同时需要 json 配置）
+    final result = await FilePicker.platform.pickFiles(
+      dialogTitle: '选择 Piper 模型文件（*.onnx）',
+      type: FileType.custom,
+      allowedExtensions: const ['onnx'],
+    );
+    if (result == null || result.files.isEmpty) return;
+    final onnxPath = result.files.single.path;
+    if (onnxPath == null || onnxPath.trim().isEmpty) return;
+
+    final dir = p.dirname(onnxPath);
+    final base = p.basename(onnxPath); // xxx.onnx
+    final cfg1 = p.join(dir, '$base.json'); // xxx.onnx.json
+    final cfg2 = p.join(dir, '${p.basenameWithoutExtension(onnxPath)}.json'); // xxx.json
+    String? configPath;
+    if (File(cfg1).existsSync()) configPath = cfg1;
+    if (configPath == null && File(cfg2).existsSync()) configPath = cfg2;
+    if (configPath == null) {
+      // 让用户手动选 json
+      final jsonPick = await FilePicker.platform.pickFiles(
+        dialogTitle: '未找到配置文件，请选择 Piper 配置（*.json / *.onnx.json）',
+        type: FileType.custom,
+        allowedExtensions: const ['json'],
+      );
+      if (jsonPick == null || jsonPick.files.isEmpty) return;
+      configPath = jsonPick.files.single.path;
+    }
+    if (configPath == null || configPath.trim().isEmpty) {
+      Get.snackbar('导入失败', '缺少配置文件 *.json / *.onnx.json');
+      return;
+    }
+
+    Get.dialog(
+      const AlertDialog(
+        content: Row(
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(width: 16),
+            Expanded(child: Text('正在导入 Piper 模型，请稍候...')),
+          ],
+        ),
+      ),
+      barrierDismissible: false,
+    );
+
+    try {
+      final name = p.basenameWithoutExtension(onnxPath);
+      final dst = await PiperModelManager.importModelFiles(
+        onnxPath: onnxPath,
+        configPath: configPath,
+        name: name,
+      );
+      final check = await PiperModelManager.checkModelDir(dst.path);
+      if (!check.ok || check.model == null) {
+        await dst.delete(recursive: true);
+        Get.back();
+        Get.snackbar('导入失败', '模型不完整：${check.message}\n\n需要：*.onnx + *.json（或 *.onnx.json）');
+        return;
+      }
+
+      ls.setPiperModelDir(check.model!.dirPath);
+
+      // 通知 TTS Service：模型已更新，重置 Piper 缓存
+      try {
+        Get.find<AudiobookTtsService>().resetPiperState();
+      } catch (_) {}
+
+      piperModelDir = check.model!.dirPath;
+      Get.back();
+      setState(() {});
+      Get.snackbar('导入成功', '已导入：${p.basename(check.model!.dirPath)}');
+    } catch (e) {
+      try {
+        Get.back();
+      } catch (_) {}
+      Get.snackbar('导入失败', '$e');
+    }
+  }
+
+  Future<void> _copyPiperPathToClipboard() async {
+    final dir = ls.getPiperModelDir();
+    if (dir == null || dir.trim().isEmpty) {
+      Get.snackbar('未设置', '当前没有 Piper 模型路径');
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: dir));
+    Get.snackbar('已复制', 'Piper 模型路径已复制到剪贴板');
+  }
+
+  void _clearPiperModel() {
+    ls.clearPiperModelDir();
+    setState(() {
+      piperModelDir = null;
+    });
+    Get.snackbar('已清除', 'Piper 离线模型路径已清除');
   }
 
   
@@ -268,7 +384,89 @@ Future<RoleVoiceMapping?> _editRoleMapping(BuildContext context, RoleVoiceMappin
             title: const Text("离线模式（sherpa-onnx，Android）"),
             subtitle: const Text("无网络也能朗读（中文模型需要你后续按说明部署）"),
           ),
-          
+          RadioListTile<String>(
+            value: "piper",
+            groupValue: mode,
+            onChanged: (v) => setState(() => mode = v!),
+            title: const Text("离线模式（Piper，Android/Windows）"),
+            subtitle: const Text("使用你导入的 Piper 离线模型；不联网"),
+          ),
+          RadioListTile<String>(
+            value: "system",
+            groupValue: mode,
+            onChanged: (v) => setState(() => mode = v!),
+            title: const Text("系统模式（系统 TTS 兜底）"),
+            subtitle: const Text("调用手机系统自带朗读；最稳，音质取决于系统"),
+          ),
+
+const Divider(height: 32),
+
+const Text("Piper（离线）", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+const SizedBox(height: 8),
+Text(
+  piperModelDir == null || piperModelDir!.trim().isEmpty
+      ? "当前：未导入 Piper 模型（已禁用联网下载；Piper 将不可用）"
+      : "当前 Piper 模型目录：\n$piperModelDir",
+  style: const TextStyle(color: Colors.grey),
+),
+const SizedBox(height: 12),
+Row(
+  children: [
+    Expanded(
+      child: FilledButton.icon(
+        onPressed: _importPiperModel,
+        icon: const Icon(Icons.upload_file),
+        label: const Text("导入 Piper 模型（onnx+json）"),
+      ),
+    ),
+    const SizedBox(width: 12),
+    IconButton(
+      tooltip: "复制路径",
+      onPressed: _copyPiperPathToClipboard,
+      icon: const Icon(Icons.copy),
+    ),
+    IconButton(
+      tooltip: "清除",
+      onPressed: _clearPiperModel,
+      icon: const Icon(Icons.delete_outline),
+    ),
+  ],
+),
+const SizedBox(height: 8),
+const Text(
+  "说明：Piper 离线模型至少需要两个文件：\n"
+  "1）xxx.onnx\n"
+  "2）xxx.onnx.json（或 xxx.json）\n"
+  "导入后程序会把它复制到应用私有目录：tts_models/piper/<模型名>/ 下。\n"
+  "本应用已禁用 Piper 联网下载，请走这个导入方式。",
+  style: TextStyle(color: Colors.grey, fontSize: 12),
+),
+
+const SizedBox(height: 16),
+const SizedBox(height: 8),
+const Text(
+  '已禁用 Piper 内置语音包/联网下载。\n请先在上方导入 Piper 离线模型（onnx+json），否则 Piper 无法使用。',
+  style: TextStyle(color: Colors.grey, fontSize: 12),
+),
+
+const Divider(height: 32),
+
+const Text("系统朗读（兜底）", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+const SizedBox(height: 8),
+TextField(
+  decoration: const InputDecoration(
+    border: OutlineInputBorder(),
+    labelText: '系统 TTS 语言（例如：zh-CN）',
+  ),
+  controller: TextEditingController(text: systemTtsLanguage),
+  onChanged: (v) => systemTtsLanguage = v.trim(),
+),
+const SizedBox(height: 8),
+const Text(
+  '说明：系统模式直接调用手机系统朗读，最稳；音质取决于系统语音包/引擎。',
+  style: TextStyle(color: Colors.grey, fontSize: 12),
+),
+
 const Divider(height: 32),
 
 const Text("离线模型（sherpa-onnx）", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),

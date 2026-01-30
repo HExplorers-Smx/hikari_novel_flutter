@@ -37,6 +37,18 @@ android {
         )
     }
 
+    // 解决 onnxruntime 原生库重复打包冲突：
+    // - piper/onnxruntime 相关依赖可能自带 libonnxruntime.so
+    // - sherpa_onnx_android 也自带 libonnxruntime.so
+    // 这里用 pickFirst 保留一个，避免 mergeReleaseNativeLibs 失败。
+    packaging {
+        jniLibs {
+            pickFirsts += setOf(
+                "**/libonnxruntime.so"
+            )
+        }
+    }
+
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.

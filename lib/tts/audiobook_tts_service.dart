@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -7,16 +8,22 @@ import 'package:dio/dio.dart';
 import 'package:get/get.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 
 import '../service/local_storage_service.dart';
 import 'sherpa_model_manager.dart';
+import 'piper_model_manager.dart';
 import 'role_classifier.dart';
 
 // sherpa-onnx 离线 TTS（Android 优先）
 import 'package:flutter/services.dart';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 
-enum TtsMode { azure, sherpa }
+// Piper 离线 TTS（内置语音包/本地模型）
+import 'package:piper_tts_plugin/piper_tts_plugin.dart';
+import 'package:piper_tts_plugin/enums/piper_voice_pack.dart';
+
+enum TtsMode { azure, sherpa, piper, system }
 
 /// 专业听书：
 /// - 分角色：旁白/女声/男声自动切换音色
@@ -26,6 +33,27 @@ class AudiobookTtsService extends GetxService {
   final _dio = Dio();
   final _player = AudioPlayer();
   final _playlist = ConcatenatingAudioSource(children: []);
+
+  // 系统 TTS（兜底）
+  final FlutterTts _systemTts = FlutterTts();
+  bool _systemTtsReady = false;
+  Completer<void>? _systemTtsCompleter;
+
+  // Piper TTS（本地模型优先；已禁用联网下载）
+  final PiperTtsPlugin _piperTts = PiperTtsPlugin();
+  PiperVoicePack? _piperLoaded; // 保留字段（但已不再使用 voice pack）
+  bool _piperLoadedLocal = false;
+  bool _piperIniting = false;
+
+  String? _lastPiperError;
+
+  /// 重置 Piper 状态（导入新模型后调用，避免缓存导致“导入成功但未就绪”）
+  void resetPiperState() {
+    _piperLoadedLocal = false;
+    _piperLoaded = null;
+    _piperIniting = false;
+    _lastPiperError = null;
+  }
 
   final isActive = false.obs;
   final isPlaying = false.obs;
@@ -63,6 +91,8 @@ class AudiobookTtsService extends GetxService {
     super.onInit();
     await _player.setAudioSource(_playlist);
 
+    await _ensureSystemTtsReady();
+
     _player.playerStateStream.listen((state) {
       isPlaying.value = state.playing;
       if (isActive.value && !_stopFlag) {
@@ -83,9 +113,51 @@ class AudiobookTtsService extends GetxService {
     });
   }
 
+  Future<void> _ensureSystemTtsReady() async {
+    if (_systemTtsReady) return;
+    try {
+      await _systemTts.awaitSpeakCompletion(true);
+      _systemTts.setCompletionHandler(() {
+        _systemTtsCompleter?.complete();
+        _systemTtsCompleter = null;
+      });
+      _systemTts.setErrorHandler((msg) {
+        _systemTtsCompleter?.completeError(msg);
+        _systemTtsCompleter = null;
+      });
+
+      // Android 系统 TTS（如讯飞）在部分 ROM 上如果不设置 AudioAttributes，
+      // 可能会出现“状态栏显示朗读中但无声音”的情况。
+      // 这里用 dynamic 以兼容不同版本 flutter_tts（没有该方法也不会编译报错）。
+      try {
+        // usage=??, contentType=1 (SPEECH), flags=0
+        await (_systemTts as dynamic).setAndroidAudioAttributes(1, 1, 0);
+      } catch (_) {}
+      try {
+        await _systemTts.setVolume(1.0);
+      } catch (_) {}
+      try {
+        await _systemTts.setSpeechRate(0.5);
+      } catch (_) {}
+      try {
+        await _systemTts.setPitch(1.0);
+      } catch (_) {}
+
+      _systemTtsReady = true;
+    } catch (_) {
+      // 即使初始化失败，也不抛出；系统 TTS 作为兜底。
+      _systemTtsReady = false;
+    }
+  }
+
   TtsMode get mode {
     final raw = LocalStorageService.instance.getTtsMode();
-    return (raw == 'sherpa' || raw == 'piper') ? TtsMode.sherpa : TtsMode.azure;
+    return switch (raw) {
+      'sherpa' => TtsMode.sherpa,
+      'piper' => TtsMode.piper,
+      'system' => TtsMode.system,
+      _ => TtsMode.azure,
+    };
   }
 
   String get _azureKey => LocalStorageService.instance.getAzureKey().trim();
@@ -107,6 +179,12 @@ class AudiobookTtsService extends GetxService {
     await stop();
     _stopFlag = false;
 
+    // 系统 TTS：直接朗读，不走 just_audio 队列
+    if (mode == TtsMode.system) {
+      await _startSystemTtsFromParagraphs(currentChapterParagraphs);
+      return;
+    }
+
     isActive.value = true;
     isPaused.value = false;
     final mappingsJson = LocalStorageService.instance.getRoleVoiceMappings().map((e) => e.toJson()).toList();
@@ -123,6 +201,67 @@ class AudiobookTtsService extends GetxService {
     }
     await _player.seek(Duration.zero, index: 0);
     await _player.play();
+  }
+
+  Future<void> _startSystemTtsFromParagraphs(List<String> paragraphs) async {
+    await _ensureSystemTtsReady();
+    isActive.value = true;
+    isPaused.value = false;
+    currentRole.value = SpeakerRole.narrator;
+
+    final mappingsJson = LocalStorageService.instance.getRoleVoiceMappings().map((e) => e.toJson()).toList();
+    _chunker = StreamingChunker(paragraphs: paragraphs, maxChars: 350, roleVoiceMappingsJson: mappingsJson);
+
+    final lang = LocalStorageService.instance.getSystemTtsLanguage().trim();
+    if (lang.isNotEmpty) {
+      try {
+        await _systemTts.setLanguage(lang);
+      } catch (_) {}
+    }
+
+    // 逐段朗读：保证稳定
+    while (!_stopFlag) {
+      final chunker = _chunker;
+      if (chunker == null) break;
+      final u = chunker.nextUtterance();
+      if (u == null) break;
+
+      currentRole.value = u.role;
+      final ok = await _speakSystem(u.text.characters.take(350).toString());
+      if (!ok) {
+        _snackOnce('系统朗读失败', '请检查手机系统是否已安装 TTS 语音包');
+        break;
+      }
+    }
+
+    // 结束
+    if (!_stopFlag) {
+      await stop();
+    }
+  }
+
+  Future<bool> _speakSystem(String text) async {
+    if (_stopFlag) return false;
+    if (text.trim().isEmpty) return true;
+
+    try {
+      _systemTtsCompleter = Completer<void>();
+      await _systemTts.speak(text);
+
+      // 防止某些 ROM/引擎不回调 completion 导致一直卡住
+      final c = _systemTtsCompleter;
+      if (c != null) {
+        await c.future.timeout(const Duration(seconds: 30));
+      }
+      return true;
+    } catch (_) {
+      try {
+        await _systemTts.stop();
+      } catch (_) {}
+      return false;
+    } finally {
+      _systemTtsCompleter = null;
+    }
   }
 
   Future<void> pause() async {
@@ -144,6 +283,14 @@ class AudiobookTtsService extends GetxService {
     currentRole.value = SpeakerRole.narrator;
 
     try {
+      await _systemTts.stop();
+    } catch (_) {}
+    try {
+      _systemTtsCompleter?.complete();
+    } catch (_) {}
+    _systemTtsCompleter = null;
+
+    try {
       await _player.stop();
     } catch (_) {}
     try {
@@ -152,24 +299,23 @@ class AudiobookTtsService extends GetxService {
     _chunker = null;
   }
 
+  Future<void> _continueAfterCompleted() async {
+    if (_stopFlag) return;
+    final chunker = _chunker;
+    if (chunker == null) return;
 
-Future<void> _continueAfterCompleted() async {
-  if (_stopFlag) return;
-  final chunker = _chunker;
-  if (chunker == null) return;
+    // 确保至少补到 1 段
+    await _kickPrefetch(awaitAll: true);
 
-  // 确保至少补到 1 段
-  await _kickPrefetch(awaitAll: true);
-
-  final cur = _player.currentIndex ?? 0;
-  final next = cur + 1;
-  if (_playlist.length > next) {
-    try {
-      await _player.seek(Duration.zero, index: next);
-      await _player.play();
-    } catch (_) {}
+    final cur = _player.currentIndex ?? 0;
+    final next = cur + 1;
+    if (_playlist.length > next) {
+      try {
+        await _player.seek(Duration.zero, index: next);
+        await _player.play();
+      } catch (_) {}
+    }
   }
-}
 
   Future<void> _kickPrefetch({bool awaitAll = false}) async {
     if (_stopFlag) return;
@@ -226,14 +372,27 @@ Future<void> _continueAfterCompleted() async {
       return out;
     }
 
-    // Android：sherpa-onnx
+    if (mode == TtsMode.piper) {
+      // Piper：仅支持离线本地模型（已禁用联网下载）
+      if (!(Platform.isAndroid || Platform.isWindows)) return null;
+      final ok = await _ensurePiperReady();
+      if (!ok) return null;
+      try {
+        final file = await _piperTts.synthesizeToFile(text: safeText, outputPath: out.path);
+        return file;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    // sherpa-onnx
+    if (mode != TtsMode.sherpa) return null;
     if (!Platform.isAndroid) return null;
     final ok = await _ensureSherpaReady();
     if (!ok) return null;
 
     try {
       final tts = _sherpaTts!;
-      // 目前离线模型通常只有 1 个说话人（sid=0）；仍保留接口以便未来扩展
       final audio = await _generateSherpaAudio(tts, safeText);
       final wrote = sherpa.writeWave(filename: out.path, samples: audio.samples, sampleRate: audio.sampleRate);
       if (!wrote) return null;
@@ -243,7 +402,108 @@ Future<void> _continueAfterCompleted() async {
     }
   }
 
+  PiperVoicePack _piperVoiceFromName(String name) {
+    return switch (name) {
+      'amy' => PiperVoicePack.amy,
+      'john' => PiperVoicePack.john,
+      'kristin' => PiperVoicePack.kristin,
+      'rohan' => PiperVoicePack.rohan,
+      _ => PiperVoicePack.norman,
+    };
+  }
 
+  Future<bool> _ensurePiperReady() async {
+    if (_piperLoadedLocal) return true;
+    if (_piperLoaded != null) return true; // 兼容旧逻辑
+    if (_piperIniting) return false;
+    _piperIniting = true;
+    _lastPiperError = null;
+    try {
+      final savedDir = LocalStorageService.instance.getPiperModelDir();
+      if (savedDir != null && savedDir.trim().isNotEmpty) {
+        final check = await PiperModelManager.checkModelDir(savedDir.trim());
+        if (check.ok && check.model != null) {
+          final ok = await _loadPiperFromLocal(check.model!);
+          if (ok) {
+            _piperLoadedLocal = true;
+            return true;
+          }
+          final msg = _lastPiperError ?? '插件未提供可用的本地模型加载接口（或加载失败）';
+          _snackOnce('Piper 加载失败', '已检测到离线模型，但加载失败：\n$msg');
+          return false;
+        } else {
+          LocalStorageService.instance.clearPiperModelDir();
+          _snackOnce('Piper 模型无效', '模型目录检查失败：${check.message}');
+          return false;
+        }
+      }
+
+      _snackOnce(
+        'Piper 未就绪',
+        '已禁用 Piper 联网下载。\n请到「听书设置」导入 Piper 离线模型（onnx+json）后再使用。',
+      );
+      return false;
+    } catch (e) {
+      _snackOnce('Piper 初始化失败', '$e');
+      return false;
+    } finally {
+      _piperIniting = false;
+    }
+  }
+
+  /// 使用用户导入的本地 Piper 模型初始化。
+  /// 由于不同版本插件 API 可能不同，这里用 dynamic 兼容多种方法名。
+  Future<bool> _loadPiperFromLocal(PiperModelInfo model) async {
+    final dyn = _piperTts as dynamic;
+
+    Future<bool> tryCall(String label, Future<dynamic> Function() fn) async {
+      try {
+        await fn();
+        return true;
+      } catch (e) {
+        _lastPiperError = '$label: $e';
+        return false;
+      }
+    }
+
+    // 尽可能兼容不同版本/不同 fork 的插件 API
+    final attempts = <Future<bool> Function()>[
+      () => tryCall('loadFromPath(modelPath,configPath)', () => dyn.loadFromPath(modelPath: model.onnxPath, configPath: model.configPath)),
+      () => tryCall('loadFromPath(onnxPath,jsonPath)', () => dyn.loadFromPath(onnxPath: model.onnxPath, jsonPath: model.configPath)),
+      () => tryCall('loadModel(modelPath,configPath)', () => dyn.loadModel(modelPath: model.onnxPath, configPath: model.configPath)),
+      () => tryCall('loadModel(onnxPath,jsonPath)', () => dyn.loadModel(onnxPath: model.onnxPath, jsonPath: model.configPath)),
+      () => tryCall('load(modelPath,configPath)', () => dyn.load(modelPath: model.onnxPath, configPath: model.configPath)),
+      () => tryCall('load(onnxPath,jsonPath)', () => dyn.load(onnxPath: model.onnxPath, jsonPath: model.configPath)),
+      () => tryCall('init(modelPath,configPath)', () => dyn.init(modelPath: model.onnxPath, configPath: model.configPath)),
+      () => tryCall('init(onnxPath,jsonPath)', () => dyn.init(onnxPath: model.onnxPath, jsonPath: model.configPath)),
+      () => tryCall('initialize(modelPath,configPath)', () => dyn.initialize(modelPath: model.onnxPath, configPath: model.configPath)),
+      () => tryCall('setModelPaths', () => dyn.setModelPaths(modelPath: model.onnxPath, configPath: model.configPath)),
+      () => tryCall('loadFromDirectory', () => dyn.loadFromDirectory(directoryPath: model.dirPath)),
+      () => tryCall('loadFromDirectory(path)', () => dyn.loadFromDirectory(model.dirPath)),
+    ];
+
+    for (final a in attempts) {
+      if (await a()) return true;
+    }
+
+    // ✅ FIX: 不能在回调里 await，这里先把临时路径算出来
+    final tmpDir = await getTemporaryDirectory();
+    final pingPath = '${tmpDir.path}/piper_ping.wav';
+
+    // 有些实现不需要显式 load，只要 synthesize 时传入模型路径
+    final okInline = await tryCall(
+      'synthesizeToFile(with model paths)',
+      () => dyn.synthesizeToFile(
+        text: 'ping',
+        outputPath: pingPath,
+        modelPath: model.onnxPath,
+        configPath: model.configPath,
+      ),
+    );
+    if (okInline) return true;
+
+    return false;
+  }
 
   /// Azure TTS: synthesize text to MP3 bytes (16kHz/128kbps mono).
   Future<Uint8List?> _azureSynthesize({
@@ -258,9 +518,7 @@ Future<void> _continueAfterCompleted() async {
       return null;
     }
 
-    final voice = (voiceOverride != null && voiceOverride.trim().isNotEmpty)
-        ? voiceOverride.trim()
-        : _voiceFor(role);
+    final voice = (voiceOverride != null && voiceOverride.trim().isNotEmpty) ? voiceOverride.trim() : _voiceFor(role);
 
     // Basic XML escape for SSML.
     String esc(String s) => s
@@ -323,12 +581,13 @@ Future<void> _continueAfterCompleted() async {
       return null;
     }
   }
+
   Future<sherpa.GeneratedAudio> _generateSherpaAudio(sherpa.OfflineTts tts, String text) async {
     // 这里保持 async，避免阻塞 UI 的 build；实际生成在 native 侧执行，速度取决于模型/设备性能
     return await Future(() => tts.generate(text: text, sid: 0, speed: 1.0));
   }
 
-    Future<bool> _ensureSherpaReady() async {
+  Future<bool> _ensureSherpaReady() async {
     if (!Platform.isAndroid) return false;
     if (_sherpaReady && _sherpaTts != null) return true;
     if (_sherpaIniting) return false;
@@ -456,5 +715,4 @@ Future<void> _continueAfterCompleted() async {
       return false;
     }
   }
-
 }
