@@ -1,0 +1,2 @@
+把你的离线模型文件放到本目录，例如 model.onnx/tokens.txt/lexicon.txt 等。
+本修复包为了减小体积未包含 model.onnx。

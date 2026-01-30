@@ -30,6 +30,13 @@ android {
         versionName = flutter.versionName
     }
 
+    // 让大模型文件不要被 aapt 压缩（部分 native 推理库需要 mmap 读取，否则会失败/看起来像“没打包进去”）
+    androidResources {
+        noCompress += setOf(
+            "onnx", "bin", "data", "fst", "pt", "wav"
+        )
+    }
+
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.

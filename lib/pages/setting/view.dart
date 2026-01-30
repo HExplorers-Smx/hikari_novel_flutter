@@ -11,6 +11,7 @@ import 'package:hikari_novel_flutter/pages/setting/controller.dart';
 import 'package:jiffy/jiffy.dart';
 
 import '../../service/local_storage_service.dart';
+import 'package:hikari_novel_flutter/pages/audiobook_setting/view.dart';
 
 class SettingPage extends StatelessWidget {
   SettingPage({super.key});
@@ -27,6 +28,14 @@ class SettingPage extends StatelessWidget {
       appBar: AppBar(),
       body: Column(
         children: [
+          ListTile(
+            leading: const Icon(Icons.record_voice_over),
+            title: Text('听书设置', style: kSettingTitleTextStyle),
+            subtitle: Text('离线 TTS / Azure TTS / 角色音色', style: kSettingSubtitleTextStyle),
+            trailing: const Icon(Icons.keyboard_arrow_right),
+            onTap: () => Get.to(() => const AudiobookSettingPage()),
+          ),
+
           ListTile(
             key: languageKey,
             title: Text("language".tr, style: kSettingTitleTextStyle),

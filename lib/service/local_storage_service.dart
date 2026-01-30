@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -11,6 +12,8 @@ import '../models/common/wenku8_node.dart';
 import '../models/dual_page_mode.dart';
 import '../models/reader_direction.dart';
 import '../models/user_info.dart';
+import '../models/tts/role_voice_mapping.dart';
+import '../tts/role_classifier.dart';
 
 class LocalStorageService extends GetxService {
   static LocalStorageService get instance => Get.find<LocalStorageService>();
@@ -60,7 +63,9 @@ class LocalStorageService extends GetxService {
       kAzureRegion = "azureRegion",
       kVoiceNarrator = "voiceNarrator",
       kVoiceFemale = "voiceFemale",
-      kVoiceMale = "voiceMale";
+      kVoiceMale = "voiceMale",
+      kRoleVoiceMappings = "roleVoiceMappings", // JSON 列表：角色名->(role/voice)
+      kSherpaModelDir = "sherpaModelDir"; // 离线 sherpa 模型目录（应用私有目录下的真实路径）
 
   Future<void> init() async {
     final Directory dir = await getApplicationSupportDirectory();
@@ -137,7 +142,61 @@ class LocalStorageService extends GetxService {
 
   String getVoiceMale() => _setting.get(kVoiceMale, defaultValue: "zh-CN-YunxiNeural");
 
-  void setLanguage(Language value) => _setting.put(kLanguage, value.index);
+  // ===== 角色列表：用于自动识别“角色：台词”并切换音色（Azure 模式下最明显） =====
+  void setRoleVoiceMappings(List<RoleVoiceMapping> list) {
+    final raw = jsonEncode(list.map((e) => e.toJson()).toList());
+    _setting.put(kRoleVoiceMappings, raw);
+  }
+
+  List<RoleVoiceMapping> getRoleVoiceMappings() {
+    final raw = _setting.get(kRoleVoiceMappings, defaultValue: "[]");
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return [];
+      final out = <RoleVoiceMapping>[];
+      for (final item in decoded) {
+        final m = RoleVoiceMapping.fromJson(item);
+        if (m != null) out.add(m);
+      }
+      return out;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  void addOrUpdateRoleVoice(RoleVoiceMapping item) {
+    final list = getRoleVoiceMappings();
+    final idx = list.indexWhere((e) => e.name == item.name);
+    if (idx >= 0) {
+      list[idx] = item;
+    } else {
+      list.add(item);
+    }
+    setRoleVoiceMappings(list);
+  }
+
+  void removeRoleVoice(String name) {
+    final list = getRoleVoiceMappings()..removeWhere((e) => e.name == name);
+    setRoleVoiceMappings(list);
+  }
+
+
+  
+
+// ===== sherpa-onnx 离线模型目录（用户导入后保存的真实路径）=====
+void setSherpaModelDir(String? dirPath) {
+  if (dirPath == null || dirPath.trim().isEmpty) {
+    _setting.delete(kSherpaModelDir);
+    return;
+  }
+  _setting.put(kSherpaModelDir, dirPath.trim());
+}
+
+String? getSherpaModelDir() => _setting.get(kSherpaModelDir, defaultValue: null);
+
+void clearSherpaModelDir() => _setting.delete(kSherpaModelDir);
+
+void setLanguage(Language value) => _setting.put(kLanguage, value.index);
 
   Language getLanguage() => Language.values[_setting.get(kLanguage, defaultValue: Language.followSystem.index)];
 

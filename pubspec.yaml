@@ -49,7 +49,7 @@ dependencies:
   url_launcher: ^6.3.2
   flutter_native_splash: ^2.4.7
   pub_semver: ^2.2.0
-  just_audio: ^0.9.38
+  just_audio: ^0.10.5
 
   # 离线高质量 TTS（Android 优先）：sherpa-onnx
   sherpa_onnx: ^1.12.23
@@ -66,7 +66,6 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/
-    - assets/tts_models/
     - assets/tts_models/
 flutter_native_splash:
   color: '#ffffff'
