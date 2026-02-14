@@ -603,6 +603,14 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  flutter_tts:
+    dependency: "direct main"
+    description:
+      name: flutter_tts
+      sha256: ce5eb209b40e95f2f4a1397116c87ab2fcdff32257d04ed7a764e75894c03775
+      url: "https://pub.flutter-io.cn"
+    source: hosted
+    version: "4.2.5"
   flutter_web_plugins:
     dependency: transitive
     description: flutter
@@ -1653,6 +1661,14 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "2.1.0"
+  wx_divider:
+    dependency: "direct main"
+    description:
+      name: wx_divider
+      sha256: "3b0f22d0058941acafff0dc4e07a5b45830515645159087d01b1fe1ce346a7ab"
+      url: "https://pub.flutter-io.cn"
+    source: hosted
+    version: "1.0.0"
   xdg_directories:
     dependency: transitive
     description:

@@ -48,7 +48,7 @@ class ReplyPage extends StatelessWidget {
           Obx(
             () => Offstage(
               offstage: controller.pageState.value != PageState.error,
-              child: ErrorMessage(msg: controller.errorMsg, onRetry: () async => controller.getPage(false)),
+              child: ErrorMessage(msg: controller.errorMsg, action: () async => controller.getPage(false)),
             ),
           ),
         ],

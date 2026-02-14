@@ -8,6 +8,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:pub_semver/pub_semver.dart';
 import '../models/common/language.dart';
 import '../network/api.dart';
+import 'log.dart';
 
 class Util {
   static String getDateTime(String dateStr) {
@@ -45,7 +46,14 @@ class Util {
       final info = await PackageInfo.fromPlatform();
       final localVer = info.version; // e.g. "1.2.0-beta.2"
 
-      final currRemoteVer = Version.parse(remoteVer.toString().substring(0, remoteVer.toString().indexOf("+")));
+      late Version currRemoteVer;
+
+      try {
+        currRemoteVer = Version.parse(remoteVer.toString().substring(0, remoteVer.toString().indexOf("+")));
+      } catch (_) {
+        currRemoteVer = Version.parse(remoteVer.toString());
+      }
+
       final currLocalVer = Version.parse(localVer.toString());
 
       return currRemoteVer > currLocalVer;

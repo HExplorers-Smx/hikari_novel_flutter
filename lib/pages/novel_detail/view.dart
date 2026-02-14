@@ -52,17 +52,17 @@ class _NovelDetailPageState extends State<NovelDetailPage> {
       children: [
         Obx(() => Offstage(offstage: controller.pageState.value != PageState.success, child: _buildPage(context))),
         Obx(() => Offstage(offstage: controller.pageState.value != PageState.loading, child: _buildLoadingPage())),
-        Obx(
-          () => Offstage(
-            offstage: controller.pageState.value != PageState.error,
-            child: ErrorMessage(msg: controller.errorMsg, onRetry: () => controller.getNovelDetail()),
-          ),
-        ),
+        Obx(() => Offstage(offstage: controller.pageState.value != PageState.error, child: _buildErrorPage())),
       ],
     );
   }
 
   Widget _buildLoadingPage() => Scaffold(appBar: AppBar(), body: const LoadingPage());
+
+  Widget _buildErrorPage() => Scaffold(
+    appBar: AppBar(),
+    body: ErrorMessage(msg: controller.errorMsg, action: controller.getNovelDetail),
+  );
 
   Widget _buildPage(BuildContext context) {
     return Obx(

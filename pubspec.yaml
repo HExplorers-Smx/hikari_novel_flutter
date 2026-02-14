@@ -105,11 +105,17 @@ dependencies:
   # 调用外部浏览器
   url_launcher: ^6.3.2
 
+  # tts
+  flutter_tts: ^4.2.0
+
   # splash
   flutter_native_splash: ^2.4.7
 
   # 版本号解析
   pub_semver: ^2.2.0
+
+  # 自定义divider
+  wx_divider: ^1.0.0
 
 dev_dependencies:
   flutter_test:

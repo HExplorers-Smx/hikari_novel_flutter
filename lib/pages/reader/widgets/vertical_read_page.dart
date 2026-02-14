@@ -6,6 +6,21 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../../../router/route_path.dart';
 import '../../../network/request.dart';
 
+sealed class _Block {
+  const _Block();
+}
+
+class _TextBlock extends _Block {
+  final String text;
+  const _TextBlock(this.text);
+}
+
+class _ImageBlock extends _Block {
+  final String url;
+  final int index;
+  const _ImageBlock(this.url, this.index);
+}
+
 class VerticalReadPage extends StatefulWidget {
   final String text;
   final List<String> images;
@@ -41,7 +56,44 @@ class _VerticalReadPageState extends State<VerticalReadPage> with WidgetsBinding
 
   late String _lastLayoutSig;
 
-  @override
+  late List<_Block> _blocks = <_Block>[];
+  int _lastReportMs = 0;
+
+  List<String> _splitTextToChunks(String text) {
+    final raw = text
+        .replaceAll('\r\n', '\n')
+        .split(RegExp(r'\n{2,}'))
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+
+    const int maxLen = 900;
+    final out = <String>[];
+    for (final p in raw) {
+      if (p.length <= maxLen) {
+        out.add(p);
+      } else {
+        for (int i = 0; i < p.length; i += maxLen) {
+          out.add(p.substring(i, (i + maxLen).clamp(0, p.length)));
+        }
+      }
+    }
+    return out;
+  }
+
+  void _rebuildBlocks() {
+    final chunks = _splitTextToChunks(text);
+    final blocks = <_Block>[];
+    for (final c in chunks) {
+      blocks.add(_TextBlock(c));
+    }
+    for (int i = 0; i < images.length; i++) {
+      blocks.add(_ImageBlock(images[i], i));
+    }
+    _blocks = blocks;
+  }
+
+@override
   void initState() {
     super.initState();
     position = widget.initPosition.toDouble();
@@ -67,6 +119,7 @@ class _VerticalReadPageState extends State<VerticalReadPage> with WidgetsBinding
     textStyle = widget.style;
     images = List<String>.from(widget.images); //转换为纯净的List<String>
     padding = widget.padding;
+    _rebuildBlocks();
     if (text.isEmpty && images.isEmpty) {
       position = 0;
       setState(() {});
@@ -91,49 +144,52 @@ class _VerticalReadPageState extends State<VerticalReadPage> with WidgetsBinding
     }
   }
 
-  @override
+      @override
   Widget build(BuildContext context) {
-    return NotificationListener<ScrollUpdateNotification>(
-      onNotification: (notification) {
-        widget.onScroll(notification.metrics.pixels, notification.metrics.maxScrollExtent);
-        return true;
+    return NotificationListener<ScrollNotification>(
+      onNotification: (n) {
+        final now = DateTime.now().millisecondsSinceEpoch;
+        if (n is ScrollEndNotification || now - _lastReportMs > 80) {
+          _lastReportMs = now;
+          widget.onScroll(n.metrics.pixels, n.metrics.maxScrollExtent);
+        }
+        return false;
       },
-      child: SingleChildScrollView(
+      child: ListView.builder(
         controller: widget.controller,
-        child: Padding(
-          padding: padding,
-          child: Column(
-            children: [
-              Text(text, textAlign: TextAlign.justify, style: textStyle),
-              images.isEmpty
-                  ? Container()
-                  : ListView.separated(
-                      //允许展开
-                      shrinkWrap: true,
-                      //禁止自身滚动
-                      physics: NeverScrollableScrollPhysics(),
-                      itemCount: images.length,
-                      padding: EdgeInsets.zero,
-                      separatorBuilder: (_, i) => SizedBox(height: 20),
-                      itemBuilder: (_, i) {
-                        return GestureDetector(
-                          onDoubleTap: () => Get.toNamed(RoutePath.photo, arguments: {"gallery_mode": true, "list": images, "index": i}),
-                          onLongPress: () => Get.toNamed(RoutePath.photo, arguments: {"gallery_mode": true, "list": images, "index": i}),
-                          child: CachedNetworkImage(
-                            width: double.infinity,
-                            imageUrl: images[i],
-                            httpHeaders: Request.userAgent,
-                            fit: BoxFit.fitWidth,
-                            progressIndicatorBuilder: (context, url, downloadProgress) =>
-                                Center(child: CircularProgressIndicator(value: downloadProgress.progress)),
-                            errorWidget: (context, url, error) => Column(children: [Icon(Icons.error_outline), Text(error.toString())]),
-                          ),
-                        );
-                      },
-                    ),
-            ],
-          ),
-        ),
+        padding: padding,
+        //允许展开
+        //禁止自身滚动
+        cacheExtent: 1200,
+        itemCount: _blocks.length,
+        itemBuilder: (_, i) {
+          final b = _blocks[i];
+          if (b is _TextBlock) {
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(b.text, textAlign: TextAlign.justify, style: textStyle),
+            );
+          }
+          if (b is _ImageBlock) {
+            return Padding(
+              padding: const EdgeInsets.only(top: 8, bottom: 20),
+              child: GestureDetector(
+                onDoubleTap: () => Get.toNamed(RoutePath.photo, arguments: {"gallery_mode": true, "list": images, "index": b.index}),
+                onLongPress: () => Get.toNamed(RoutePath.photo, arguments: {"gallery_mode": true, "list": images, "index": b.index}),
+                child: CachedNetworkImage(
+                  width: double.infinity,
+                  imageUrl: b.url,
+                  httpHeaders: Request.userAgent,
+                  fit: BoxFit.fitWidth,
+                  progressIndicatorBuilder: (context, url, downloadProgress) =>
+                      Center(child: CircularProgressIndicator(value: downloadProgress.progress)),
+                  errorWidget: (context, url, error) => Column(children: [Icon(Icons.error_outline), Text(error.toString())]),
+                ),
+              ),
+            );
+          }
+          return const SizedBox.shrink();
+        },
       ),
     );
   }

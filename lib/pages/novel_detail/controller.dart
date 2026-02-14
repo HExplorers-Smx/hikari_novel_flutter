@@ -185,14 +185,12 @@ class NovelDetailController extends GetxController {
   Future<void> getNovelDetail() async {
     late NovelDetail data;
 
-    final futureList = await Future.wait([Api.getNovelDetail(aid: aid), Api.getCatalogue(aid: aid)]);
-
-    final nd = futureList[0];
-    final cat = futureList[1];
+    final nd = await Api.getNovelDetail(aid: aid);
 
     switch (nd) {
       case Success():
         data = Parser.getNovelDetail(nd.data);
+        final cat = await Api.getCatalogue(aid: aid);
         switch (cat) {
           case Success():
             {
@@ -207,23 +205,20 @@ class NovelDetailController extends GetxController {
               pageState.value = PageState.success;
               await DBService.instance.upsertNovelDetail(NovelDetailEntityData(aid: aid, json: novelDetail.value!.toString())); //缓存小说详情
             }
-
           case Error():
             {
-              if (!await _getNovelDetailByLocal()) {
-                //当网络和本地目录都没有的时候报错
-                errorMsg = cat.error.toString();
-                pageState.value = PageState.error;
-              }
+              //检测本地是否有缓存
+              if (await _getNovelDetailByLocal()) return;
+              errorMsg = cat.error.toString();
+              pageState.value = PageState.error;
             }
         }
       case Error():
         {
-          if (!await _getNovelDetailByLocal()) {
-            //当网络和本地目录都没有的时候报错
-            errorMsg = nd.error;
-            pageState.value = PageState.success;
-          }
+          //检测本地是否有缓存
+          if (await _getNovelDetailByLocal()) return;
+          errorMsg = nd.error.toString();
+          pageState.value = PageState.error;
         }
     }
   }
